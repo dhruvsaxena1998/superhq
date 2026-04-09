@@ -8,7 +8,11 @@ A sandboxed AI agent orchestration platform built with Rust and [GPUI](https://g
 
 ## Install
 
-Download the latest `.dmg` from the [Releases](https://github.com/superhq-ai/superhq/releases) page.
+```bash
+brew tap superhq-ai/tap && brew install --cask superhq
+```
+
+Or download the latest `.dmg` from the [Releases](https://github.com/superhq-ai/superhq/releases) page.
 
 > **macOS Gatekeeper:** Since the app is not notarized, macOS will block it on first launch.
 > Open **System Settings > Privacy & Security**, scroll down, and click **"Open Anyway"** next to the SuperHQ message.
