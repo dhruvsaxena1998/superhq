@@ -57,3 +57,35 @@ jobs:
         with:
           generate_release_notes: true
           files: artifacts/*
+
+  update-homebrew:
+    name: Update Homebrew tap
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: superhq-ai/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Download DMG artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dmg
+          path: /tmp/artifact
+
+      - name: Update cask
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA256=$(sha256sum /tmp/artifact/SuperHQ-${VERSION}.dmg | awk '{print $1}')
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Casks/superhq.rb
+          sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Casks/superhq.rb
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/superhq.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "bump superhq to ${GITHUB_REF_NAME}"
+          git push
