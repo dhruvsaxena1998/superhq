@@ -263,21 +263,14 @@ impl TerminalPanel {
     }
 
     fn notify_side_panel(&self, ws_id: i64, cx: &mut Context<Self>) {
-        eprintln!("[side-panel] notify_side_panel called for ws_id={}", ws_id);
-        eprintln!("[side-panel]   active_workspace_id={:?}", self.active_workspace_id);
         if self.active_workspace_id != Some(ws_id) {
-            eprintln!("[side-panel]   BAIL: workspace not active");
             return;
         }
         let Some(ref side_panel) = self.side_panel else {
-            eprintln!("[side-panel]   BAIL: no side_panel entity");
             return;
         };
-        let sandbox_result = self.get_active_sandbox(ws_id);
-        eprintln!("[side-panel]   get_active_sandbox returned: {}", sandbox_result.is_some());
-        if let Some((sandbox, tokio_handle)) = sandbox_result {
+        if let Some((sandbox, tokio_handle)) = self.get_active_sandbox(ws_id) {
             side_panel.update(cx, |sp, cx| {
-                eprintln!("[side-panel]   calling on_sandbox_ready, current sandbox.is_some()={}", sp.sandbox.is_some());
                 sp.on_sandbox_ready(sandbox, tokio_handle, cx);
             });
         }
@@ -1170,8 +1163,6 @@ impl TerminalPanel {
                         }
                     }
 
-                    // Notify the side panel that a sandbox is ready
-                    eprintln!("[side-panel] setup complete for ws_id={} tab_id={}", ws_id, tab_id);
                     panel.notify_side_panel(ws_id, cx);
 
                     // Wait for TUI to take over (cursor hidden or alt screen).
