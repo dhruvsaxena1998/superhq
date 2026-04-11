@@ -3,6 +3,8 @@ pub mod components;
 #[allow(dead_code)]
 pub mod command_palette;
 pub mod dialogs;
+#[allow(dead_code)]
+pub mod dock;
 
 pub mod review;
 pub mod settings;

@@ -10,3 +10,4 @@ pub mod git;
 pub mod manager;
 pub mod pty_adapter;
 pub mod secrets;
+pub mod service;

@@ -10,6 +10,7 @@ use changes_tab::ChangesSnapshot;
 use diff_service::DiffService;
 use watcher::{DiffResult, WatchBridge};
 
+use crate::ui::dock::{DockPosition, Panel, PanelEvent};
 use crate::ui::theme as t;
 use gpui::*;
 use shuru_sdk::AsyncSandbox;
@@ -198,4 +199,13 @@ impl Render for SidePanel {
             )
             .child(self.changes_tab.render(cx))
     }
+}
+
+impl EventEmitter<PanelEvent> for SidePanel {}
+
+impl Panel for SidePanel {
+    fn name(&self) -> &'static str { "Review" }
+    fn icon(&self) -> Option<&'static str> { None }
+    fn position(&self) -> DockPosition { DockPosition::Right }
+    fn default_size(&self) -> Pixels { px(340.0) }
 }
