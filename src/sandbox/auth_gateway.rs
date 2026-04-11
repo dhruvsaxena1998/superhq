@@ -208,11 +208,12 @@ async fn resolve_upstream(
     };
 
     // API key → api.openai.com/v1 as-is
-    // OAuth   → chatgpt.com/backend-api/codex (strip /v1 prefix)
-    //           Codex's chatgpt auth mode uses /backend-api/codex as base.
+    // OAuth   → chatgpt.com/backend-api/codex (strip /v1 prefix,
+    //           and /v1/codex prefix to avoid double /codex/)
     let url = if is_oauth {
         let path = path_and_query
-            .strip_prefix("/v1")
+            .strip_prefix("/v1/codex")
+            .or_else(|| path_and_query.strip_prefix("/v1"))
             .unwrap_or(path_and_query);
         format!("https://chatgpt.com/backend-api/codex{path}")
     } else {
@@ -439,6 +440,7 @@ async fn forward_http(
 
     // Build the upstream request
     let method = req.method().clone();
+    eprintln!("[auth_gateway] {method} {path_and_query} -> {}", upstream.url);
     let mut builder = state.client.request(method, &upstream.url);
 
     // Copy headers, stripping Authorization and Host
@@ -453,12 +455,13 @@ async fn forward_http(
 
     builder = upstream.apply_to_request(builder);
 
-    // Stream the request body
+    // Collect the request body
     let body_bytes = req
         .into_body()
         .collect()
         .await
         .map(|collected| collected.to_bytes())?;
+    eprintln!("[auth_gateway] body: {} bytes", body_bytes.len());
     if !body_bytes.is_empty() {
         builder = builder.body(body_bytes);
     }
@@ -471,6 +474,17 @@ async fn forward_http(
 
     for (name, value) in upstream_resp.headers() {
         resp_builder = resp_builder.header(name, value);
+    }
+
+    // For errors, log the response body for debugging
+    if !status.is_success() {
+        let err_body = upstream_resp.bytes().await.unwrap_or_default();
+        let err_text = String::from_utf8_lossy(&err_body);
+        eprintln!("[auth_gateway] upstream {status}: {err_text}");
+        let body = Full::new(err_body)
+            .map_err(|e| -> BoxError { Box::new(e) })
+            .boxed();
+        return Ok(resp_builder.body(body).unwrap());
     }
 
     let byte_stream = upstream_resp.bytes_stream();
@@ -493,4 +507,22 @@ fn extract_jwt_claim(jwt: &str, claim: &str) -> Option<String> {
         .get(claim)?
         .as_str()
         .map(|s| s.to_string())
+}
+
+/// Build a minimal unsigned JWT containing just the chatgpt_account_id claim.
+/// Pi's `openai-codex-responses` API type parses the apiKey as a JWT to extract
+/// the account ID. This gives it a parseable token without exposing the real
+/// OAuth credentials.
+pub fn build_stub_jwt(db: &Database, secret_env_var: &str) -> Option<String> {
+    let id_token = db.get_oauth_id_token(secret_env_var).ok()??;
+    let account_id = extract_jwt_claim(&id_token, "chatgpt_account_id")?;
+
+    let header = URL_SAFE_NO_PAD.encode(b"{\"alg\":\"none\",\"typ\":\"JWT\"}");
+    let payload_json = serde_json::json!({
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": account_id
+        }
+    });
+    let payload = URL_SAFE_NO_PAD.encode(payload_json.to_string().as_bytes());
+    Some(format!("{header}.{payload}."))
 }

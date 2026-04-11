@@ -407,12 +407,25 @@ impl super::TerminalPanel {
                         if let Some(env_var) = spec.base_url_env {
                             gateway_env.insert(env_var.to_string(), gw_url.clone());
                         }
-                        // Always pass the URL so auth_setup can use it
+                        // Pass the gateway URL so auth_setup can write agent
+                        // config files. Don't inject the real env var name
+                        // (e.g. OPENAI_API_KEY) — that activates built-in
+                        // providers that bypass the gateway.
                         gateway_env.insert("_GATEWAY_BASE_URL".to_string(), gw_url);
-                        gateway_env.insert(
-                            spec.secret_env_var.to_string(),
-                            spec.dummy_key.to_string(),
-                        );
+                        // Pass auth method so auth_setup can pick the right API type + models
+                        let auth_method = db_for_secrets
+                            .get_secret_auth_method(spec.secret_env_var)
+                            .unwrap_or_else(|_| "api_key".into());
+                        gateway_env.insert("_GATEWAY_AUTH_METHOD".to_string(), auth_method.clone());
+                        // For OAuth, build a stub JWT with just the accountId so Pi's
+                        // openai-codex-responses can parse it without real credentials.
+                        if auth_method == "oauth" {
+                            if let Some(jwt) = crate::sandbox::auth_gateway::build_stub_jwt(
+                                &db_for_secrets, spec.secret_env_var,
+                            ) {
+                                gateway_env.insert("_GATEWAY_STUB_JWT".to_string(), jwt);
+                            }
+                        }
                         auth_gateway_handle = Some(gw);
                     }
                     Err(e) => {

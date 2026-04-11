@@ -52,25 +52,24 @@ pub fn config() -> AgentConfig {
             "OpenAI API Key",
             &[],
             &[],
+            false,
         )],
         auth_gateway: Some(AuthGatewaySpec {
             secret_env_var: "OPENAI_API_KEY",
             upstream_base: "https://api.openai.com",
             guest_port: 9100,
             base_url_env: None, // written to config.toml instead
-            dummy_key: "sk-shuru-gateway",
         }),
     }
 }
 
 pub async fn auth_setup(sandbox: &AsyncSandbox, vars: &HashMap<String, String>) {
     let home = home(vars);
-    let api_key = vars.get("OPENAI_API_KEY").map(|s| s.as_str()).unwrap_or("");
 
     // Auth credentials
     let auth = serde_json::json!({
         "auth_mode": "apikey",
-        "OPENAI_API_KEY": api_key,
+        "OPENAI_API_KEY": super::GATEWAY_DUMMY_KEY,
     });
     let auth_path = format!("{home}/.codex/auth.json");
     write_config(sandbox, &auth_path, auth.to_string().as_bytes()).await;

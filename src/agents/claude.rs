@@ -26,6 +26,7 @@ pub fn config() -> AgentConfig {
             "Anthropic API Key",
             &["api.anthropic.com"],
             &[],
+            false,
         )],
         auth_gateway: None,
     }

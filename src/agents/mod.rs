@@ -7,6 +7,10 @@ use shuru_sdk::AsyncSandbox;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Dummy API key injected into agent config files. The auth gateway on the host
+/// swaps this for the real credential before forwarding upstream.
+pub const GATEWAY_DUMMY_KEY: &str = "sk-shuru-gateway";
+
 /// Auth gateway spec — tells the boot flow to run a reverse proxy on the host
 /// that swaps a dummy API key for the real credential before forwarding upstream.
 pub struct AuthGatewaySpec {
@@ -19,8 +23,6 @@ pub struct AuthGatewaySpec {
     /// Env var to set in the sandbox pointing to the gateway base URL.
     /// None if the agent reads it from its own config file instead.
     pub base_url_env: Option<&'static str>,
-    /// Dummy API key value injected into the sandbox.
-    pub dummy_key: &'static str,
 }
 
 /// A single install step.
@@ -132,6 +134,7 @@ pub async fn run_auth_setup(
 ) {
     match agent_name {
         "codex" => codex::auth_setup(sandbox, vars).await,
+        "pi" => pi::auth_setup(sandbox, vars).await,
         _ => {}
     }
 }
@@ -159,6 +162,7 @@ fn secret_entry(
     label: &str,
     hosts: &[&str],
     oauth_claims: &[(&str, &str)],
+    optional: bool,
 ) -> RequiredSecretEntry {
     RequiredSecretEntry::Full(RequiredSecret {
         env_var: env_var.into(),
@@ -174,5 +178,6 @@ fn secret_entry(
                     .collect(),
             )
         },
+        optional,
     })
 }

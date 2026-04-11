@@ -1,4 +1,6 @@
-use super::{secret_entry, AgentConfig, InstallStep};
+use super::{home, secret_entry, write_config, AgentConfig, AuthGatewaySpec, InstallStep};
+use shuru_sdk::AsyncSandbox;
+use std::collections::HashMap;
 
 pub fn config() -> AgentConfig {
     AgentConfig {
@@ -39,12 +41,92 @@ pub fn config() -> AgentConfig {
                 skip_if: None,
             },
         ],
-        secrets: vec![secret_entry(
-            "ANTHROPIC_API_KEY",
-            "Anthropic API Key",
-            &["api.anthropic.com"],
-            &[],
-        )],
-        auth_gateway: None,
+        secrets: vec![
+            secret_entry(
+                "ANTHROPIC_API_KEY",
+                "Anthropic API Key",
+                &["api.anthropic.com"],
+                &[],
+                true,
+            ),
+            secret_entry(
+                "OPENAI_API_KEY",
+                "OpenAI API Key",
+                &[],
+                &[],
+                true,
+            ),
+        ],
+        auth_gateway: Some(AuthGatewaySpec {
+            secret_env_var: "OPENAI_API_KEY",
+            upstream_base: "https://api.openai.com",
+            guest_port: 9101,
+            base_url_env: None, // written to models.json instead
+        }),
     }
+}
+
+pub async fn auth_setup(sandbox: &AsyncSandbox, vars: &HashMap<String, String>) {
+    let home = home(vars);
+    let gateway_url = vars.get("_GATEWAY_BASE_URL").map(|s| s.as_str()).unwrap_or("");
+    // Only write models.json if the gateway is available (user has OpenAI key)
+    if gateway_url.is_empty() {
+        return;
+    }
+
+    // Strip /v1 suffix — Pi's baseUrl should be the root
+    let base_url = gateway_url.trim_end_matches("/v1");
+
+    let is_oauth = vars.get("_GATEWAY_AUTH_METHOD").map(|s| s == "oauth").unwrap_or(false);
+
+    let (api_type, api_key, models) = if is_oauth {
+        // OAuth: use openai-codex-responses (handles instructions field,
+        // chatgpt-account-id header). apiKey is a stub JWT with just the
+        // accountId — the gateway swaps it for the real OAuth token.
+        let jwt = vars.get("_GATEWAY_STUB_JWT")
+            .cloned()
+            .unwrap_or_else(|| super::GATEWAY_DUMMY_KEY.to_string());
+        (
+            "openai-codex-responses",
+            jwt,
+            serde_json::json!([
+                { "id": "gpt-5.4", "reasoning": true },
+                { "id": "gpt-5.4-mini", "reasoning": true },
+                { "id": "gpt-5.3-codex", "reasoning": true },
+                { "id": "gpt-5.3-codex-spark", "reasoning": true },
+                { "id": "gpt-5.2-codex", "reasoning": true },
+                { "id": "gpt-5.2", "reasoning": true },
+                { "id": "gpt-5.1-codex-max", "reasoning": true },
+                { "id": "gpt-5.1-codex-mini", "reasoning": true },
+                { "id": "gpt-5.1", "reasoning": true },
+            ]),
+        )
+    } else {
+        (
+            "openai-responses",
+            super::GATEWAY_DUMMY_KEY.to_string(),
+            serde_json::json!([
+                { "id": "gpt-5.4", "reasoning": true },
+                { "id": "gpt-5.2-codex", "reasoning": true },
+                { "id": "gpt-5.1-codex", "reasoning": true },
+                { "id": "gpt-5.1-codex-max", "reasoning": true },
+                { "id": "gpt-5-chat-latest" },
+                { "id": "gpt-5.3-codex-spark", "reasoning": true },
+            ]),
+        )
+    };
+
+    let config = serde_json::json!({
+        "providers": {
+            "openai-gateway": {
+                "baseUrl": format!("{}/v1", base_url),
+                "api": api_type,
+                "apiKey": api_key,
+                "models": models,
+            }
+        }
+    });
+
+    let config_path = format!("{home}/.pi/agent/models.json");
+    write_config(sandbox, &config_path, config.to_string().as_bytes()).await;
 }

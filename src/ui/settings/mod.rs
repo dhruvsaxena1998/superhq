@@ -17,7 +17,7 @@ use crate::ui::theme as t;
 fn secret_display_info(env_var: &str) -> (&str, &str) {
     match env_var {
         "ANTHROPIC_API_KEY" => ("Anthropic", "Claude Code, Pi"),
-        "OPENAI_API_KEY" => ("OpenAI", "Codex"),
+        "OPENAI_API_KEY" => ("OpenAI", "Codex, Pi"),
         _ => ("Custom", "Custom secret"),
     }
 }

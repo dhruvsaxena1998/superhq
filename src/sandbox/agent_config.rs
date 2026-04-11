@@ -45,9 +45,11 @@ pub async fn run_auth_setup(
         }
     }
 
-    // Gateway env vars (OPENAI_API_KEY dummy, etc.)
+    // Gateway env vars (skip internal _GATEWAY_* keys used only by auth_setup)
     for (k, v) in gateway_env {
-        write_export(&mut profile_lines, k, v);
+        if !k.starts_with("_GATEWAY_") {
+            write_export(&mut profile_lines, k, v);
+        }
     }
 
     if let Err(e) = sandbox

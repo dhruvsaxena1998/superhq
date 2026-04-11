@@ -144,6 +144,9 @@ pub struct RequiredSecret {
     /// Key = env var name in sandbox, Value = JWT claim name.
     /// e.g. `{"CHATGPT_ACCOUNT_ID": "chatgpt_account_id"}`
     pub oauth_claims: Option<HashMap<String, String>>,
+    /// If true, don't block agent boot when this secret is missing.
+    #[serde(default)]
+    pub optional: bool,
 }
 
 impl RequiredSecretEntry {
@@ -155,6 +158,14 @@ impl RequiredSecretEntry {
         }
     }
 
+    /// Whether this secret is optional (don't block boot if missing).
+    pub fn is_optional(&self) -> bool {
+        match self {
+            Self::Plain(_) => false,
+            Self::Full(r) => r.optional,
+        }
+    }
+
     /// Get the full RequiredSecret, promoting plain strings to defaults.
     pub fn as_full(&self) -> RequiredSecret {
         match self {
@@ -163,6 +174,7 @@ impl RequiredSecretEntry {
                 label: None,
                 hosts: None,
                 oauth_claims: None,
+                optional: false,
             },
             Self::Full(r) => r.clone(),
         }

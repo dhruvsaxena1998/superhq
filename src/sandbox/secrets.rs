@@ -22,11 +22,24 @@ pub fn default_hosts(env_var: &str) -> Vec<String> {
 
 /// Check which required secrets are missing from the vault.
 pub fn check_missing(db: &Database, required: &[RequiredSecretEntry]) -> Vec<RequiredSecretEntry> {
-    required
+    // Required secrets: all must be present
+    let mut missing: Vec<RequiredSecretEntry> = required
         .iter()
-        .filter(|e| !db.has_secret(e.env_var()).unwrap_or(false))
+        .filter(|e| !e.is_optional() && !db.has_secret(e.env_var()).unwrap_or(false))
         .cloned()
-        .collect()
+        .collect();
+
+    // Optional secrets: at least one must be present (if any exist)
+    let optional: Vec<&RequiredSecretEntry> = required.iter().filter(|e| e.is_optional()).collect();
+    if !optional.is_empty() {
+        let has_any = optional.iter().any(|e| db.has_secret(e.env_var()).unwrap_or(false));
+        if !has_any {
+            // Report all optional secrets as missing so user can pick one
+            missing.extend(optional.iter().map(|e| (*e).clone()));
+        }
+    }
+
+    missing
 }
 
 pub struct ResolvedSecrets {

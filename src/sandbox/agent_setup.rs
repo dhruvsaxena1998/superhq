@@ -14,9 +14,10 @@ pub fn agent_checkpoint_name(agent_slug: &str) -> String {
     format!("agent-{}-base", agent_slug)
 }
 
-/// Check if a checkpoint file exists on disk.
+/// Check if a checkpoint file exists on disk (ext4 for raw, idx for CAS).
 pub fn checkpoint_exists(checkpoint_name: &str) -> bool {
     let data_dir = default_data_dir();
-    let path = format!("{}/checkpoints/{}.ext4", data_dir, checkpoint_name);
-    std::path::Path::new(&path).exists()
+    let base = format!("{}/checkpoints/{}", data_dir, checkpoint_name);
+    std::path::Path::new(&format!("{base}.ext4")).exists()
+        || std::path::Path::new(&format!("{base}.idx")).exists()
 }

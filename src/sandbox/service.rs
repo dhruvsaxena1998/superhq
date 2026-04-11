@@ -126,7 +126,11 @@ fn read_host_global_gitignore() -> Option<Vec<u8>> {
 
 /// Build the agent environment for open_shell.
 pub fn build_agent_env(gateway_env: &HashMap<String, String>) -> HashMap<String, String> {
-    let mut env = gateway_env.clone();
+    let mut env: HashMap<String, String> = gateway_env
+        .iter()
+        .filter(|(k, _)| !k.starts_with("_GATEWAY_"))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     env.insert(
         "NODE_EXTRA_CA_CERTS".into(),
         "/usr/local/share/ca-certificates/shuru-proxy.crt".into(),
