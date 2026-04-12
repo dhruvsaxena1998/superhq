@@ -6,6 +6,7 @@ use std::borrow::Cow;
 #[folder = "assets"]
 #[include = "icons/**/*.svg"]
 #[include = "app-icon-128.png"]
+#[include = "themes/*.json"]
 struct AppAssets;
 
 pub struct Assets;

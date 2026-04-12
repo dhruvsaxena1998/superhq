@@ -1,10 +1,69 @@
-use gpui::{HighlightStyle, hsla};
-use std::collections::BTreeSet;
+use gpui::{HighlightStyle, Rgba};
+use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
+use std::sync::LazyLock;
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator};
 use tree_sitter_language::LanguageFn;
 
-/// Get tree-sitter language + highlights query for a language name.
+// ── Syntax theme (loaded from JSON) ────────────────────────────
+
+/// Maps tree-sitter capture names to colors.
+/// Loaded once from the embedded JSON file.
+static SYNTAX_THEME: LazyLock<HashMap<String, HighlightStyle>> = LazyLock::new(|| {
+    let raw: HashMap<String, String> =
+        serde_json::from_str(include_str!("../../../assets/themes/superhq-dark-syntax.json"))
+            .expect("Failed to parse syntax theme (superhq-dark-syntax.json)");
+
+    raw.into_iter()
+        .filter_map(|(name, hex)| {
+            let color = parse_hex(&hex)?;
+            Some((
+                name,
+                HighlightStyle {
+                    color: Some(color.into()),
+                    ..Default::default()
+                },
+            ))
+        })
+        .collect()
+});
+
+fn parse_hex(hex: &str) -> Option<Rgba> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Rgba {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a: 1.0,
+    })
+}
+
+fn style_for_capture(name: &str) -> Option<HighlightStyle> {
+    // Try exact match first, then progressively strip suffixes.
+    // e.g. "keyword.function" → "keyword.function", then "keyword"
+    let theme = &*SYNTAX_THEME;
+    if let Some(style) = theme.get(name) {
+        return Some(*style);
+    }
+    // Walk up the capture hierarchy
+    let mut key = name;
+    while let Some(dot) = key.rfind('.') {
+        key = &key[..dot];
+        if let Some(style) = theme.get(key) {
+            return Some(*style);
+        }
+    }
+    None
+}
+
+// ── Language registry ──────────────────────────────────────────
+
 fn get_language(name: &str) -> Option<(LanguageFn, &'static str)> {
     match name {
         "rust" => Some((tree_sitter_rust::LANGUAGE, tree_sitter_rust::HIGHLIGHTS_QUERY)),
@@ -32,38 +91,6 @@ fn get_language(name: &str) -> Option<(LanguageFn, &'static str)> {
     }
 }
 
-// ── Dark theme palette ─────────────────────────────────────────
-
-fn style_for_capture(name: &str) -> Option<HighlightStyle> {
-    let color = match name {
-        "keyword" | "keyword.return" | "keyword.function" | "keyword.operator"
-        | "keyword.import" | "keyword.export" | "keyword.conditional"
-        | "keyword.repeat" | "keyword.exception" => Some(hsla(0.63, 0.70, 0.68, 1.0)), // blue
-        "string" | "string.special" => Some(hsla(0.28, 0.50, 0.60, 1.0)),               // green
-        "comment" | "comment.doc" => Some(hsla(0.0, 0.0, 0.45, 1.0)),                   // gray
-        "function" | "function.call" | "function.method" | "function.builtin" | "function.macro"
-        | "method" => Some(hsla(0.14, 0.65, 0.70, 1.0)),                                // yellow
-        "type" | "type.builtin" | "constructor" => Some(hsla(0.48, 0.55, 0.65, 1.0)),   // cyan
-        "variable.builtin" | "variable.special" | "variable.parameter"
-        | "constant" | "constant.builtin" => Some(hsla(0.55, 0.55, 0.70, 1.0)),         // light blue
-        "number" | "boolean" | "float" => Some(hsla(0.08, 0.65, 0.65, 1.0)),            // orange
-        "operator" => Some(hsla(0.0, 0.0, 0.75, 1.0)),                                  // light gray
-        "punctuation" | "punctuation.bracket" | "punctuation.delimiter"
-        | "punctuation.special" => Some(hsla(0.0, 0.0, 0.60, 1.0)),                     // dim gray
-        "property" | "field" | "label" => Some(hsla(0.55, 0.40, 0.70, 1.0)),            // periwinkle
-        "attribute" | "tag" => Some(hsla(0.0, 0.55, 0.65, 1.0)),                        // red
-        "string.escape" | "string.regex" => Some(hsla(0.08, 0.55, 0.60, 1.0)),          // dark orange
-        "namespace" | "module" => Some(hsla(0.48, 0.40, 0.60, 1.0)),                    // teal
-        "enum" | "variant" => Some(hsla(0.48, 0.55, 0.65, 1.0)),                        // cyan
-        "embedded" | "preproc" => Some(hsla(0.83, 0.50, 0.65, 1.0)),                    // magenta
-        _ => None,
-    }?;
-    Some(HighlightStyle {
-        color: Some(color),
-        ..Default::default()
-    })
-}
-
 // ── Public API ─────────────────────────────────────────────────
 
 /// Run tree-sitter highlighting on `text` for the given language name.
@@ -82,9 +109,6 @@ pub fn highlight(language_name: &str, text: &str) -> Vec<(Range<usize>, Highligh
         return Vec::new();
     };
 
-    // Some highlights.scm files use patterns that their grammar version
-    // doesn't recognise (e.g. a node name added in a newer grammar).
-    // Ignore those errors — we'll just get fewer highlights.
     let query = match Query::new(&lang, query_src) {
         Ok(q) => q,
         Err(_) => return Vec::new(),
@@ -138,7 +162,6 @@ fn merge_styles(
             continue;
         }
 
-        // Find the last (most specific) style covering this interval.
         let mut top: Option<HighlightStyle> = None;
         for (range, style) in &styles {
             if range.start <= interval.start && interval.end <= range.end {
@@ -151,7 +174,6 @@ fn merge_styles(
         }
     }
 
-    // Merge adjacent ranges with same style.
     let mut merged: Vec<(Range<usize>, HighlightStyle)> = Vec::with_capacity(result.len());
     for (range, style) in result {
         if let Some((last_range, last_style)) = merged.last_mut() {

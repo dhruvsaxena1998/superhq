@@ -1,62 +1,155 @@
-use gpui::{div, px, rgb, rgba, Div, ParentElement as _, Rgba, Styled as _};
+use gpui::{div, px, Div, ParentElement as _, Rgba, Styled as _};
+use serde::Deserialize;
+use std::sync::LazyLock;
 
-// ── Surface / background ─────────────────────────────────────────
-pub fn bg_base() -> Rgba { rgb(0x111111) }
-pub fn bg_surface() -> Rgba { rgb(0x1e1e1e) }
-pub fn bg_elevated() -> Rgba { rgba(0xffffff05) }
-pub fn bg_hover() -> Rgba { rgba(0xffffff08) }
-pub fn bg_active() -> Rgba { rgba(0xffffff0c) }
-pub fn bg_selected() -> Rgba { rgba(0xffffff0f) }
-pub fn bg_input() -> Rgba { rgba(0xffffff06) }
+// ── Color type with hex deserialization ─────────────────────────
 
-// ── Borders ──────────────────────────────────────────────────────
-pub fn border() -> Rgba { rgba(0xffffff0a) }
-pub fn border_subtle() -> Rgba { rgba(0xffffff06) }
-pub fn border_strong() -> Rgba { rgba(0xffffff18) }
-pub fn border_focus() -> Rgba { rgba(0xffffff30) }
-pub fn transparent() -> Rgba { rgba(0x00000000) }
-pub fn accent() -> Rgba { rgba(0x60a5facc) }
-pub fn selection_bg() -> Rgba { rgba(0x60a5fa30) }
+/// A color parsed from a hex string like "#1a1b26" or "#ffffff0a".
+#[derive(Clone, Copy)]
+pub struct Color(pub Rgba);
 
-// ── Text ─────────────────────────────────────────────────────────
-pub fn text_primary() -> Rgba { rgba(0xffffffee) }
-pub fn text_secondary() -> Rgba { rgba(0xffffffcc) }
-pub fn text_tertiary() -> Rgba { rgba(0xffffffaa) }
-pub fn text_muted() -> Rgba { rgba(0xffffff88) }
-pub fn text_dim() -> Rgba { rgba(0xffffff55) }
-pub fn text_ghost() -> Rgba { rgba(0xffffff44) }
-pub fn text_faint() -> Rgba { rgba(0xffffff33) }
-pub fn text_invisible() -> Rgba { rgba(0xffffff1a) }
+impl<'de> Deserialize<'de> for Color {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s: String = Deserialize::deserialize(deserializer)?;
+        parse_hex_to_rgba(&s)
+            .map(Color)
+            .ok_or_else(|| serde::de::Error::custom(format!("invalid hex color: {s}")))
+    }
+}
 
-// ── Status indicators ────────────────────────────────────────────
-pub fn status_green_dim() -> Rgba { rgba(0x4ade80aa) }
-pub fn status_dim() -> Rgba { rgba(0xffffff1a) }
+fn parse_hex_to_rgba(hex: &str) -> Option<Rgba> {
+    let hex = hex.trim_start_matches('#');
+    let (r, g, b, a) = match hex.len() {
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            (r, g, b, 255u8)
+        }
+        8 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+            (r, g, b, a)
+        }
+        _ => return None,
+    };
+    Some(Rgba {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a: a as f32 / 255.0,
+    })
+}
 
-// ── Agent status ────────────────────────────────────────────────
-pub fn agent_running() -> Rgba { rgba(0x3B82F6FF) }
-pub fn agent_needs_input() -> Rgba { rgba(0xF59E0BFF) }
+// ── Theme struct — every field maps 1:1 to JSON ────────────────
 
-// Error
-pub fn error_text() -> Rgba { rgba(0xEF4444FF) }
-pub fn error_bg() -> Rgba { rgba(0x1A0505FF) }
-pub fn error_border() -> Rgba { rgba(0x3B1111FF) }
+#[derive(Deserialize)]
+pub struct ThemeColors {
+    pub bg_base: Color,
+    pub bg_surface: Color,
+    pub bg_elevated: Color,
+    pub bg_hover: Color,
+    pub bg_active: Color,
+    pub bg_selected: Color,
+    pub bg_input: Color,
 
-// ── Git file status ──────────────────────────────────────────────
-pub fn status_modified() -> Rgba { rgba(0xe5c07bff) }
-pub fn status_added() -> Rgba { rgba(0x98c379ff) }
-pub fn status_deleted() -> Rgba { rgba(0xe06c75ff) }
+    pub border: Color,
+    pub border_subtle: Color,
+    pub border_strong: Color,
+    pub border_focus: Color,
+    pub transparent: Color,
+    pub accent: Color,
+    pub selection_bg: Color,
 
-// ── Diff viewer ─────────────────────────────────────────────────
-pub fn diff_add_bg() -> Rgba { rgba(0x98c37930) }
-pub fn diff_del_bg() -> Rgba { rgba(0xe06c7530) }
-pub fn diff_add_text() -> Rgba { rgba(0x98c379cc) }
-pub fn diff_del_text() -> Rgba { rgba(0xe06c75cc) }
-pub fn diff_hunk_header() -> Rgba { rgba(0x61afef66) }
+    pub text_primary: Color,
+    pub text_secondary: Color,
+    pub text_tertiary: Color,
+    pub text_muted: Color,
+    pub text_dim: Color,
+    pub text_ghost: Color,
+    pub text_faint: Color,
+    pub text_invisible: Color,
 
-// ── Shared styles ───────────────────────────────────────────────
+    pub status_green_dim: Color,
+    pub status_dim: Color,
 
-/// Standard popover/menu container style. Used by context menus, dropdowns,
-/// select popups, workspace menus, and the new tab menu.
+    pub agent_running: Color,
+    pub agent_needs_input: Color,
+
+    pub error_text: Color,
+    pub error_bg: Color,
+    pub error_border: Color,
+
+    pub status_modified: Color,
+    pub status_added: Color,
+    pub status_deleted: Color,
+
+    pub diff_add_bg: Color,
+    pub diff_del_bg: Color,
+    pub diff_add_text: Color,
+    pub diff_del_text: Color,
+    pub diff_hunk_header: Color,
+}
+
+static THEME: LazyLock<ThemeColors> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../assets/themes/superhq-dark.json"))
+        .expect("Failed to parse default theme (superhq-dark.json)")
+});
+
+// ── Public accessors (same API as before) ──────────────────────
+
+pub fn bg_base() -> Rgba { THEME.bg_base.0 }
+pub fn bg_surface() -> Rgba { THEME.bg_surface.0 }
+pub fn bg_elevated() -> Rgba { THEME.bg_elevated.0 }
+pub fn bg_hover() -> Rgba { THEME.bg_hover.0 }
+pub fn bg_active() -> Rgba { THEME.bg_active.0 }
+pub fn bg_selected() -> Rgba { THEME.bg_selected.0 }
+pub fn bg_input() -> Rgba { THEME.bg_input.0 }
+
+pub fn border() -> Rgba { THEME.border.0 }
+pub fn border_subtle() -> Rgba { THEME.border_subtle.0 }
+pub fn border_strong() -> Rgba { THEME.border_strong.0 }
+pub fn border_focus() -> Rgba { THEME.border_focus.0 }
+pub fn transparent() -> Rgba { THEME.transparent.0 }
+pub fn accent() -> Rgba { THEME.accent.0 }
+pub fn selection_bg() -> Rgba { THEME.selection_bg.0 }
+
+pub fn text_primary() -> Rgba { THEME.text_primary.0 }
+pub fn text_secondary() -> Rgba { THEME.text_secondary.0 }
+pub fn text_tertiary() -> Rgba { THEME.text_tertiary.0 }
+pub fn text_muted() -> Rgba { THEME.text_muted.0 }
+pub fn text_dim() -> Rgba { THEME.text_dim.0 }
+pub fn text_ghost() -> Rgba { THEME.text_ghost.0 }
+pub fn text_faint() -> Rgba { THEME.text_faint.0 }
+pub fn text_invisible() -> Rgba { THEME.text_invisible.0 }
+
+pub fn status_green_dim() -> Rgba { THEME.status_green_dim.0 }
+pub fn status_dim() -> Rgba { THEME.status_dim.0 }
+
+pub fn agent_running() -> Rgba { THEME.agent_running.0 }
+pub fn agent_needs_input() -> Rgba { THEME.agent_needs_input.0 }
+
+pub fn error_text() -> Rgba { THEME.error_text.0 }
+pub fn error_bg() -> Rgba { THEME.error_bg.0 }
+pub fn error_border() -> Rgba { THEME.error_border.0 }
+
+pub fn status_modified() -> Rgba { THEME.status_modified.0 }
+pub fn status_added() -> Rgba { THEME.status_added.0 }
+pub fn status_deleted() -> Rgba { THEME.status_deleted.0 }
+
+pub fn diff_add_bg() -> Rgba { THEME.diff_add_bg.0 }
+pub fn diff_del_bg() -> Rgba { THEME.diff_del_bg.0 }
+pub fn diff_add_text() -> Rgba { THEME.diff_add_text.0 }
+pub fn diff_del_text() -> Rgba { THEME.diff_del_text.0 }
+pub fn diff_hunk_header() -> Rgba { THEME.diff_hunk_header.0 }
+
+// ── Shared styles ──────────────────────────────────────────────
+
 pub fn popover() -> Div {
     div()
         .bg(bg_surface())
@@ -70,8 +163,6 @@ pub fn popover() -> Div {
         .flex_col()
 }
 
-/// Standard menu item row. Callers add .id(), .on_click(), .children() etc.
-/// Callers must add `.id()` then `.hover(|s| s.bg(t::bg_hover()))` after.
 pub fn menu_item() -> Div {
     div()
         .px_2p5()
@@ -85,8 +176,6 @@ pub fn menu_item() -> Div {
         .gap(px(6.0))
 }
 
-/// Standard button styling. Callers add `.id()`, `.on_click()`.
-/// For Default variant. Use `button_primary()` for emphasis.
 pub fn button(label: &str) -> Div {
     div()
         .px_3()
@@ -102,7 +191,6 @@ pub fn button(label: &str) -> Div {
         .child(label.to_string())
 }
 
-/// Primary button — emphasis styling with background.
 pub fn button_primary(label: &str) -> Div {
     div()
         .px_3()
@@ -119,7 +207,6 @@ pub fn button_primary(label: &str) -> Div {
         .child(label.to_string())
 }
 
-/// Danger button — destructive action styling.
 pub fn button_danger(label: &str) -> Div {
     div()
         .px_3()
@@ -135,7 +222,6 @@ pub fn button_danger(label: &str) -> Div {
         .child(label.to_string())
 }
 
-/// Standard menu separator line.
 pub fn menu_separator() -> Div {
     div()
         .mx_2()
@@ -144,19 +230,8 @@ pub fn menu_separator() -> Div {
         .bg(border())
 }
 
-// ── Utilities ────────────────────────────────────────────────────
+// ── Utilities ──────────────────────────────────────────────────
+
 pub fn parse_hex_color(hex: &str) -> Option<Rgba> {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() != 6 {
-        return None;
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    Some(Rgba {
-        r: r as f32 / 255.0,
-        g: g as f32 / 255.0,
-        b: b as f32 / 255.0,
-        a: 1.0,
-    })
+    parse_hex_to_rgba(hex)
 }
