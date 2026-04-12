@@ -122,7 +122,13 @@ impl WorkspaceListView {
 
     pub fn clear_active(&mut self, cx: &mut Context<Self>) {
         self.active_workspace_id = None;
-        self.refresh(cx);
+        // avoid refresh() here since it reads terminal_panel which may already be borrowed
+        for view in &self.workspace_views {
+            view.update(cx, |item, _| {
+                item.is_active = false;
+            });
+        }
+        cx.notify();
     }
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
