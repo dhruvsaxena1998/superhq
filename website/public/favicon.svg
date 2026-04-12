@@ -37,25 +37,25 @@
   <rect x="15" y="15" width="994" height="994" rx="213" ry="213" fill="url(#bg)"/>
 
   <!-- 20x20 grid, cell size = 51.2px. "hq" with padding. -->
-  <g shape-rendering="crispEdges">
+  <g shape-rendering="crispEdges" transform="translate(-44.8, 0)">
     <!-- h: lit faces -->
-    <rect x="179.2" y="307.2" width="51.2" height="358.4" fill="url(#lit)"/>
-    <rect x="332.8" y="409.6" width="102.4" height="51.2" fill="url(#lit)"/>
-    <rect x="384" y="460.8" width="51.2" height="204.8" fill="url(#lit)"/>
+    <rect x="204.8" y="307.2" width="51.2" height="358.4" fill="url(#lit)"/>
+    <rect x="358.4" y="409.6" width="102.4" height="51.2" fill="url(#lit)"/>
+    <rect x="409.6" y="460.8" width="51.2" height="204.8" fill="url(#lit)"/>
 
     <!-- q: lit faces -->
-    <rect x="588.8" y="409.6" width="204.8" height="51.2" fill="url(#lit)"/>
-    <rect x="537.6" y="460.8" width="51.2" height="153.6" fill="url(#lit)"/>
-    <rect x="793.6" y="460.8" width="51.2" height="307.2" fill="url(#lit)"/>
+    <rect x="614.4" y="409.6" width="204.8" height="51.2" fill="url(#lit)"/>
+    <rect x="563.2" y="460.8" width="51.2" height="153.6" fill="url(#lit)"/>
+    <rect x="819.2" y="460.8" width="51.2" height="307.2" fill="url(#lit)"/>
 
     <!-- h: shadow faces -->
-    <rect x="230.4" y="307.2" width="51.2" height="358.4" fill="url(#shd)"/>
-    <rect x="281.6" y="460.8" width="51.2" height="51.2" fill="url(#shd)"/>
-    <rect x="435.2" y="460.8" width="51.2" height="204.8" fill="url(#shd)"/>
+    <rect x="256" y="307.2" width="51.2" height="358.4" fill="url(#shd)"/>
+    <rect x="307.2" y="460.8" width="51.2" height="51.2" fill="url(#shd)"/>
+    <rect x="460.8" y="460.8" width="51.2" height="204.8" fill="url(#shd)"/>
 
     <!-- q: shadow faces -->
-    <rect x="588.8" y="460.8" width="51.2" height="153.6" fill="url(#shd)"/>
-    <rect x="844.8" y="460.8" width="51.2" height="307.2" fill="url(#shd)"/>
-    <rect x="588.8" y="614.4" width="153.6" height="51.2" fill="url(#shd)"/>
+    <rect x="614.4" y="460.8" width="51.2" height="153.6" fill="url(#shd)"/>
+    <rect x="870.4" y="460.8" width="51.2" height="307.2" fill="url(#shd)"/>
+    <rect x="614.4" y="614.4" width="153.6" height="51.2" fill="url(#shd)"/>
   </g>
 </svg>
