@@ -67,24 +67,6 @@ pub enum FileStatus {
     Deleted,
 }
 
-impl FileStatus {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Modified => "M",
-            Self::Added => "A",
-            Self::Deleted => "D",
-        }
-    }
-
-    pub fn color(&self) -> Rgba {
-        match self {
-            Self::Modified => t::status_modified(),
-            Self::Added => t::status_added(),
-            Self::Deleted => t::status_deleted(),
-        }
-    }
-}
-
 impl ChangesTab {
     pub fn new() -> Self {
         Self {

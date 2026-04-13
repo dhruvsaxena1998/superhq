@@ -37,10 +37,6 @@
   "error_bg":     "#261010",
   "error_border": "#3B1111",
 
-  "status_modified": "#e5c07b",
-  "status_added":    "#98c379",
-  "status_deleted":  "#e06c75",
-
   "diff_add_bg":      "#98c37918",
   "diff_del_bg":      "#e06c7518",
   "diff_add_text":    "#98c379cc",

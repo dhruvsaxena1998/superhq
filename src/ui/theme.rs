@@ -88,9 +88,6 @@ pub struct ThemeColors {
     pub error_bg: Color,
     pub error_border: Color,
 
-    pub status_modified: Color,
-    pub status_added: Color,
-    pub status_deleted: Color,
 
     pub diff_add_bg: Color,
     pub diff_del_bg: Color,
@@ -144,9 +141,6 @@ pub fn error_text() -> Rgba { THEME.error_text.0 }
 pub fn error_bg() -> Rgba { THEME.error_bg.0 }
 pub fn error_border() -> Rgba { THEME.error_border.0 }
 
-pub fn status_modified() -> Rgba { THEME.status_modified.0 }
-pub fn status_added() -> Rgba { THEME.status_added.0 }
-pub fn status_deleted() -> Rgba { THEME.status_deleted.0 }
 
 pub fn diff_add_bg() -> Rgba { THEME.diff_add_bg.0 }
 pub fn diff_del_bg() -> Rgba { THEME.diff_del_bg.0 }

@@ -926,16 +926,6 @@ impl Element for DiffBlock {
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-fn truncate_path_middle(path: &str) -> String {
-    let parts: Vec<&str> = path.split('/').collect();
-    if parts.len() <= 2 {
-        return path.to_string();
-    }
-    let filename = parts[parts.len() - 1];
-    let first = parts[0];
-    format!("{}/\u{2026}/{}", first, filename)
-}
-
 pub fn copy_selection(sel: &SelectionInner, lines: &[DiffDisplayLine], cx: &mut App) {
     let (sl, sc, el, ec) = sel.ordered();
     let mut text = String::new();
@@ -1025,7 +1015,7 @@ pub fn render_file_section(p: FileSectionParams) -> Stateful<Div> {
     let mut el = div()
         .id(SharedString::from(format!("file-section-{}", p.path)))
         .track_focus(p.focus_handle)
-        .flex().flex_col().flex_shrink_0().pb_1();
+        .flex().flex_col().flex_shrink_0();
     {
         let sel_for_key = p.selection.clone();
         let lines_for_key: Option<Arc<Vec<DiffDisplayLine>>> = p.lines.cloned();
@@ -1058,7 +1048,7 @@ pub fn render_file_section(p: FileSectionParams) -> Stateful<Div> {
             let block_height = lines.len() as f32 * LINE_HEIGHT + SCROLLBAR_TRACK_HEIGHT;
 
             el = el.child(
-                div().mx_1().flex_shrink_0().h(px(block_height)).child(
+                div().flex_shrink_0().h(px(block_height)).child(
                     DiffBlock::new(
                         ElementId::Name(SharedString::from(format!("diff-{}", p.path))),
                         lines.clone(),
@@ -1086,36 +1076,61 @@ fn render_header(
     on_keep: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
 ) -> impl IntoElement {
     let is_expanded = expanded.get();
-    let chevron = if is_expanded { "▾" } else { "▸" };
+    let chevron_icon = if is_expanded {
+        "icons/files/chevron-down.svg"
+    } else {
+        "icons/files/chevron-right.svg"
+    };
     let expanded = expanded.clone();
+
+    let (filename, dir) = match path.rfind('/') {
+        Some(i) => (&path[i + 1..], Some(&path[..i])),
+        None => (path, None),
+    };
+
+    let is_deleted = status == FileStatus::Deleted;
+    let name_color = if is_deleted { t::text_ghost() } else { t::text_secondary() };
 
     let mut h = div()
         .id(SharedString::from(format!("hdr-{}", path)))
-        .mx_1().mt_1().px_2().py(px(6.0))
+        .px_3().py(px(7.0))
         .flex().items_center().gap_1p5().overflow_hidden()
-        .rounded(px(5.0))
-        .bg(t::bg_surface()).border_1().border_color(t::border())
+        .border_b_1().border_color(t::border())
         .cursor_pointer()
         .hover(|s: StyleRefinement| s.bg(t::bg_hover()))
         .on_click(move |_: &ClickEvent, _window, _cx| {
             expanded.set(!expanded.get());
         })
         .child(
-            div().text_xs().text_color(t::text_faint()).flex_shrink_0()
-                .w(px(10.0)).child(chevron),
+            svg()
+                .path(SharedString::from(chevron_icon))
+                .size(px(12.0))
+                .flex_shrink_0()
+                .text_color(t::text_ghost()),
         )
         .child(
-            div().text_xs().font_weight(FontWeight::BOLD)
-                .text_color(status.color()).flex_shrink_0().child(status.label()),
-        )
-        .child(
-            div().text_xs().text_color(t::text_secondary())
-                .font_weight(FontWeight::MEDIUM).flex_grow()
-                .min_w_0()
-                .overflow_hidden()
-                .text_ellipsis()
-                .child(SharedString::from(truncate_path_middle(path))),
+            div().text_xs().font_weight(FontWeight::MEDIUM)
+                .text_color(name_color).flex_shrink_0()
+                .child(SharedString::from(filename.to_string())),
         );
+
+    if let Some(dir) = dir {
+        h = h.child(
+            div().text_xs().text_color(t::text_dim()).flex_shrink_0()
+                .child(SharedString::from(dir.to_string())),
+        );
+    }
+
+    if status == FileStatus::Added {
+        h = h.child(
+            div().text_xs().px(px(5.0)).py(px(1.0)).rounded(px(3.0))
+                .bg(t::diff_add_bg()).text_color(t::diff_add_text())
+                .flex_shrink_0().child("New"),
+        );
+    }
+
+    h = h.child(div().flex_grow());
+
     if stats.additions > 0 {
         h = h.child(div().text_xs().text_color(t::diff_add_text()).flex_shrink_0()
             .child(SharedString::from(format!("+{}", stats.additions))));
@@ -1125,16 +1140,14 @@ fn render_header(
             .child(SharedString::from(format!("-{}", stats.deletions))));
     }
 
-    // Per-file action buttons — always rendered for consistent height,
-    // but invisible when collapsed to prevent layout shift.
     h = h.child(
         div().id(SharedString::from(format!("discard-{}", path)))
             .ml_1().px_1p5().py(px(2.0)).rounded(px(3.0))
             .text_xs().text_color(t::text_dim()).flex_shrink_0()
             .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .hover(|s: StyleRefinement| s.bg(t::bg_hover()).text_color(t::diff_del_text()))
             .on_click(move |event, window, cx| {
-                cx.stop_propagation();
                 on_discard(event, window, cx);
             })
             .child("Discard"),
@@ -1144,9 +1157,9 @@ fn render_header(
             .px_1p5().py(px(2.0)).rounded(px(3.0))
             .text_xs().text_color(t::text_dim()).flex_shrink_0()
             .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .hover(|s: StyleRefinement| s.bg(t::bg_hover()).text_color(t::diff_add_text()))
             .on_click(move |event, window, cx| {
-                cx.stop_propagation();
                 on_keep(event, window, cx);
             })
             .child("Keep"),
