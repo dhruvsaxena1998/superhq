@@ -798,16 +798,26 @@ impl TerminalView {
         }
     }
 
-    /// Paste from clipboard into the PTY (with bracket paste mode support).
+    /// Paste from clipboard into the PTY with bracketed paste support.
     fn paste_clipboard(&self, cx: &App) {
         if let Some(item) = cx.read_from_clipboard() {
             if let Some(text) = item.text() {
                 if !text.is_empty() {
                     let bracketed = self.state.content.mode
                         .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
-                    if bracketed { self.write_to_pty(b"\x1b[200~"); }
-                    self.write_to_pty(text.as_bytes());
-                    if bracketed { self.write_to_pty(b"\x1b[201~"); }
+                    if bracketed {
+                        // Filter \x1b and \x03 to prevent premature paste
+                        // termination in some shells.
+                        let filtered = text.replace(['\x1b', '\x03'], "");
+                        self.write_to_pty(b"\x1b[200~");
+                        self.write_to_pty(filtered.as_bytes());
+                        self.write_to_pty(b"\x1b[201~");
+                    } else {
+                        // Without bracketed paste, convert \n → \r
+                        // (simulating Enter keypresses).
+                        let normalized = text.replace("\r\n", "\r").replace('\n', "\r");
+                        self.write_to_pty(normalized.as_bytes());
+                    }
                 }
             }
         }

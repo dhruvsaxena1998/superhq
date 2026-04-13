@@ -179,9 +179,40 @@ impl TerminalState {
     }
 
     /// Process incoming bytes from the PTY through the VTE parser.
+    ///
+    /// Normalizes readline's bracketed paste redisplay pattern:
+    /// `ESC[27m \r ESC[7m` → `ESC[27m \r \n ESC[7m`
+    /// Readline uses inverse video + bare CR (no LF) for multi-line paste
+    /// redisplay, causing all lines to overlap on the same row. Inserting
+    /// a LF after the CR makes each line advance properly.
     pub fn process_bytes(&mut self, bytes: &[u8]) {
+        // Pattern: 1b 5b 32 37 6d 0d 1b 5b 37 6d
+        //          ESC [  2  7  m  CR ESC [  7  m
+        const PATTERN: &[u8] = b"\x1b[27m\r\x1b[7m";
+        const REPLACEMENT: &[u8] = b"\x1b[27m\r\n\x1b[7m";
+
+        if bytes.len() < PATTERN.len() || !bytes.windows(PATTERN.len()).any(|w| w == PATTERN) {
+            // Fast path: no pattern found, process directly
+            let mut term = self.term.lock();
+            self.parser.advance(&mut *term, bytes);
+            return;
+        }
+
+        // Replace all occurrences of the pattern
+        let mut normalized = Vec::with_capacity(bytes.len() + 64);
+        let mut i = 0;
+        while i < bytes.len() {
+            if i + PATTERN.len() <= bytes.len() && &bytes[i..i + PATTERN.len()] == PATTERN {
+                normalized.extend_from_slice(REPLACEMENT);
+                i += PATTERN.len();
+            } else {
+                normalized.push(bytes[i]);
+                i += 1;
+            }
+        }
+
         let mut term = self.term.lock();
-        self.parser.advance(&mut *term, bytes);
+        self.parser.advance(&mut *term, &normalized);
     }
 
     /// Resize the terminal to new dimensions.
