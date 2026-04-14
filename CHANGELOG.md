@@ -1,9 +1,5 @@
 # Changelog
 
-## 0.3.5
-
-- New agent: Cursor CLI. Installed via Cursor's upstream installer inside the sandbox so you always get the current build.
-
 ## 0.3.4
 
 - Codex installer works again. Matches shuru 0.5.9 which drops the guest's silent-first-component stripping in favor of an explicit `strip_components` per download. Flat tarballs (Codex) and directory-wrapped ones (Node, Pi) now extract correctly.

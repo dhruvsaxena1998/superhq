@@ -1,6 +1,5 @@
 mod claude;
 mod codex;
-mod cursor;
 mod pi;
 
 use crate::db::{RequiredSecret, RequiredSecretEntry};
@@ -125,7 +124,6 @@ pub fn builtin_agents() -> Vec<AgentConfig> {
         pi::config(),
         claude::config(),
         codex::config(),
-        cursor::config(),
     ]
 }
 
