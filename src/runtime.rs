@@ -8,7 +8,7 @@ use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
 
 /// The shuru release version we need. Must match a published GitHub release.
-const SHURU_VERSION: &str = "0.5.5";
+const SHURU_VERSION: &str = "0.5.7";
 
 /// Expected files inside the tar.gz.
 const REQUIRED_FILES: &[&str] = &["Image", "rootfs.ext4", "initramfs.cpio.gz"];
