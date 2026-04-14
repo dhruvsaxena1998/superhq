@@ -2,7 +2,7 @@
 
 A sandboxed AI agent orchestration platform built with Rust and [GPUI](https://gpui.rs). Run multiple AI coding agents (Claude Code, Codex, etc.) in isolated sandbox environments with full terminal access.
 
-> **Warning:** This is a very early alpha, largely vibe-coded. Expect rough edges, missing features, and breaking changes. Not ready for production use.
+> **Warning:** This is a very early alpha. Expect rough edges, missing features, and breaking changes. Not ready for production use.
 
 ![SuperHQ](website/public/screenshot.webp)
 
