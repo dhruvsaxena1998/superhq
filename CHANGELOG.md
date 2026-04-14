@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2
+
+- Review panel is a lot faster with many changed files. Each row is its own view, so hover no longer re-renders the full list every frame.
+- Header totals (+N/-M) show up eagerly without computing the full hunk diff for every file.
+- Deletions in mounted workspaces now show up reliably, including the case where a file only exists on the host.
+- Discard on a deletion no longer flickers.
+- Preserve the review panel's accumulated changes when switching to a tab without a sandbox instead of wiping it.
+
 ## 0.3.1
 
 - Setting to disable auto-launch of the default agent on workspace open.
