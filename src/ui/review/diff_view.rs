@@ -1,16 +1,19 @@
 use crate::ui::components::scrollbar;
 use crate::ui::theme as t;
 use gpui::*;
-use super::diff_engine::{DiffLineKind, FileDiff, DiffStats, DiffHunk};
+use super::diff_engine::{self, DiffLineKind, FileDiff, DiffStats, DiffHunk};
 use super::changes_tab::FileStatus;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
 const LINE_HEIGHT: f32 = 18.0;
-const GUTTER_WIDTH: f32 = 48.0;
+const CHECKBOX_COL_WIDTH: f32 = 16.0;
+const LINENO_WIDTH: f32 = 48.0;
+const GUTTER_WIDTH: f32 = CHECKBOX_COL_WIDTH + LINENO_WIDTH;
 const GUTTER_PAD: f32 = 8.0;
 const CONTENT_PAD: f32 = 6.0;
 
@@ -31,11 +34,25 @@ pub struct DiffDisplayLine {
     pub lineno: SharedString,
     pub content: SharedString,
     pub is_hunk_header: bool,
+    /// Set for toggleable lines (additions, unpaired deletions). Used as
+    /// the key into `LineStagingState`.
+    pub hunk_idx: Option<usize>,
+    pub line_idx: Option<usize>,
+    /// For paired deletions: the (hunk_idx, line_idx) of the addition
+    /// that controls this line's fate. The deletion dims when this
+    /// addition is discarded.
+    pub paired_addition: Option<(usize, usize)>,
 }
 
 pub fn collect_lines(hunks: &[DiffHunk]) -> Vec<DiffDisplayLine> {
     let mut lines = Vec::new();
-    for hunk in hunks {
+    for (hunk_idx, hunk) in hunks.iter().enumerate() {
+        let pairs = diff_engine::find_replacement_pairs(&hunk.lines);
+        let del_to_add: std::collections::HashMap<usize, usize> =
+            pairs.iter().map(|(d, a)| (*d, *a)).collect();
+        let paired_dels: std::collections::HashSet<usize> =
+            pairs.iter().map(|(d, _)| *d).collect();
+
         lines.push(DiffDisplayLine {
             kind: DiffLineKind::Context,
             lineno: SharedString::default(),
@@ -44,18 +61,31 @@ pub fn collect_lines(hunks: &[DiffHunk]) -> Vec<DiffDisplayLine> {
                 hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count
             )),
             is_hunk_header: true,
+            hunk_idx: None,
+            line_idx: None,
+            paired_addition: None,
         });
-        for line in &hunk.lines {
+        for (line_idx, line) in hunk.lines.iter().enumerate() {
             let lineno = if line.kind == DiffLineKind::Deletion {
                 line.old_lineno
             } else {
                 line.new_lineno
             };
+            let is_toggleable = match line.kind {
+                DiffLineKind::Context => false,
+                DiffLineKind::Deletion => !paired_dels.contains(&line_idx),
+                DiffLineKind::Addition => true,
+            };
+            let paired_addition = del_to_add.get(&line_idx)
+                .map(|&add_idx| (hunk_idx, add_idx));
             lines.push(DiffDisplayLine {
                 kind: line.kind,
                 lineno: lineno.map(|n| SharedString::from(n.to_string())).unwrap_or_default(),
                 content: SharedString::from(line.content.trim_end_matches('\n').to_string()),
                 is_hunk_header: false,
+                hunk_idx: if is_toggleable { Some(hunk_idx) } else { None },
+                line_idx: if is_toggleable { Some(line_idx) } else { None },
+                paired_addition,
             });
         }
     }
@@ -255,6 +285,52 @@ impl SelectionState {
     pub fn set(&self, v: SelectionInner) { self.0.set(v); }
 }
 
+// ── Line staging state (persisted across frames) ──────────────
+
+#[derive(Clone)]
+pub struct LineStagingState(Rc<RefCell<HashSet<(usize, usize)>>>);
+
+impl LineStagingState {
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(HashSet::new())))
+    }
+
+    pub fn toggle(&self, hunk_idx: usize, line_idx: usize) {
+        let mut set = self.0.borrow_mut();
+        let key = (hunk_idx, line_idx);
+        if !set.remove(&key) {
+            set.insert(key);
+        }
+    }
+
+    pub fn is_discarded(&self, hunk_idx: usize, line_idx: usize) -> bool {
+        self.0.borrow().contains(&(hunk_idx, line_idx))
+    }
+
+    pub fn has_any_discarded(&self) -> bool {
+        !self.0.borrow().is_empty()
+    }
+
+    pub fn snapshot(&self) -> HashSet<(usize, usize)> {
+        self.0.borrow().clone()
+    }
+
+    pub fn clear(&self) {
+        self.0.borrow_mut().clear();
+    }
+
+    /// Returns true for lines that the user has explicitly unchecked.
+    /// Only applies to toggleable lines (additions, unpaired deletions).
+    /// Paired deletions are never "discarded" -- their visual is handled
+    /// by `staged_line_colors` based on their paired addition's state.
+    pub fn is_line_discarded(&self, line: &DiffDisplayLine) -> bool {
+        if let (Some(h), Some(l)) = (line.hunk_idx, line.line_idx) {
+            return self.is_discarded(h, l);
+        }
+        false
+    }
+}
+
 // ── Scroll + scrollbar state (persisted across frames) ──────────
 
 #[derive(Clone, Copy)]
@@ -300,6 +376,7 @@ pub struct DiffBlock {
     highlights: Option<Arc<HighlightCache>>,
     scroll: DiffScrollState,
     selection: SelectionState,
+    staging: LineStagingState,
     parent_scroll: Option<ScrollHandle>,
     focus_handle: FocusHandle,
     char_width_cache: Rc<Cell<Option<Pixels>>>,
@@ -312,11 +389,12 @@ impl DiffBlock {
         highlights: Option<Arc<HighlightCache>>,
         scroll: DiffScrollState,
         selection: SelectionState,
+        staging: LineStagingState,
         parent_scroll: Option<ScrollHandle>,
         focus_handle: FocusHandle,
         char_width_cache: Rc<Cell<Option<Pixels>>>,
     ) -> Self {
-        Self { id, lines, highlights, scroll, selection, parent_scroll, focus_handle, char_width_cache }
+        Self { id, lines, highlights, scroll, selection, staging, parent_scroll, focus_handle, char_width_cache }
     }
 }
 
@@ -425,7 +503,7 @@ impl Element for DiffBlock {
             };
 
             let shaped_content = if !line.content.is_empty() {
-                let (fallback_color, _) = line_colors(line);
+                let (fallback_color, _) = staged_line_colors(line, &self.staging);
 
                 // Use cached highlight spans if available for this line
                 let runs = self.highlights.as_ref()
@@ -546,13 +624,19 @@ impl Element for DiffBlock {
             size: size(bounds.size.width - px(GUTTER_WIDTH + GUTTER_PAD), bounds.size.height),
         };
 
-        // 1) Line backgrounds (full width)
+        // 1) Line backgrounds (full width, dimmed for discarded lines)
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for i in 0..line_count {
                 let (ref line, _, _) = prepaint.shaped_lines[i];
                 let y = bounds.origin.y + px(i as f32 * LINE_HEIGHT);
-                let (_, bg) = line_colors(line);
+                let is_discarded = self.staging.is_line_discarded(line);
+                let (_, bg) = staged_line_colors(line, &self.staging);
                 if let Some(bg_color) = bg {
+                    let bg_color = if is_discarded {
+                        Rgba { a: bg_color.a * 0.3, ..bg_color }
+                    } else {
+                        bg_color
+                    };
                     window.paint_quad(fill(
                         Bounds {
                             origin: point(bounds.origin.x, y),
@@ -613,19 +697,38 @@ impl Element for DiffBlock {
             }
         }
 
-        // 2) Content text (clipped to content area, scrolled)
+        // 2) Content text (clipped to content area, scrolled; dimmed + strikethrough for discarded)
         window.with_content_mask(Some(ContentMask { bounds: content_bounds }), |window| {
             for i in 0..line_count {
-                let (_, _, ref shaped_content) = prepaint.shaped_lines[i];
+                let (ref line, _, ref shaped_content) = prepaint.shaped_lines[i];
                 let y = bounds.origin.y + px(i as f32 * LINE_HEIGHT);
+                let is_discarded = self.staging.is_line_discarded(line);
                 if let Some(sc) = shaped_content {
                     let content_x = gutter_x_end + px(CONTENT_PAD) - scroll_x;
                     let _ = sc.paint(point(content_x, y), line_h, window, cx);
+                    if is_discarded {
+                        // Dim overlay + strikethrough
+                        window.paint_quad(fill(
+                            Bounds {
+                                origin: point(content_bounds.origin.x, y),
+                                size: size(content_bounds.size.width, line_h),
+                            },
+                            Rgba { r: 0.09, g: 0.09, b: 0.11, a: 0.7 },
+                        ));
+                        let text_y = y + line_h * 0.5;
+                        window.paint_quad(fill(
+                            Bounds {
+                                origin: point(content_x, text_y - px(0.5)),
+                                size: size(sc.width, px(1.0)),
+                            },
+                            t::text_ghost(),
+                        ));
+                    }
                 }
             }
         });
 
-        // 3) Gutter overlay (fixed, on top)
+        // 3) Gutter overlay (fixed, on top) with checkbox column
         let gutter_bounds = Bounds {
             origin: bounds.origin,
             size: size(px(GUTTER_WIDTH + GUTTER_PAD), bounds.size.height),
@@ -635,8 +738,14 @@ impl Element for DiffBlock {
             for i in 0..line_count {
                 let (ref line, _, _) = prepaint.shaped_lines[i];
                 let y = bounds.origin.y + px(i as f32 * LINE_HEIGHT);
-                let (_, bg) = line_colors(line);
+                let is_discarded = self.staging.is_line_discarded(line);
+                let (_, bg) = staged_line_colors(line, &self.staging);
                 if let Some(bg_color) = bg {
+                    let bg_color = if is_discarded {
+                        Rgba { a: bg_color.a * 0.3, ..bg_color }
+                    } else {
+                        bg_color
+                    };
                     window.paint_quad(fill(
                         Bounds {
                             origin: point(bounds.origin.x, y),
@@ -646,12 +755,48 @@ impl Element for DiffBlock {
                     ));
                 }
             }
+            // Checkboxes for addition/deletion lines
+            let checkbox_size = px(7.0);
+            let checkbox_x = bounds.origin.x + px(CHECKBOX_COL_WIDTH / 2.0) - checkbox_size / 2.0;
             for i in 0..line_count {
-                let (_, ref shaped_gutter, _) = prepaint.shaped_lines[i];
+                let (ref line, _, _) = prepaint.shaped_lines[i];
+                if line.hunk_idx.is_none() { continue; }
                 let y = bounds.origin.y + px(i as f32 * LINE_HEIGHT);
+                let checkbox_y = y + line_h / 2.0 - checkbox_size / 2.0;
+                let is_discarded = self.staging.is_line_discarded(line);
+                let cb_bounds = Bounds {
+                    origin: point(checkbox_x, checkbox_y),
+                    size: size(checkbox_size, checkbox_size),
+                };
+                let (fg, _) = staged_line_colors(line, &self.staging);
+                if is_discarded {
+                    let ghost: Hsla = t::text_ghost().into();
+                    window.paint_quad(
+                        quad(cb_bounds, px(2.0), Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }, px(1.0), ghost, BorderStyle::Solid),
+                    );
+                } else {
+                    window.paint_quad(
+                        fill(cb_bounds, fg).corner_radii(px(2.0)),
+                    );
+                }
+            }
+            // Line numbers (offset right by checkbox column)
+            for i in 0..line_count {
+                let (ref line, ref shaped_gutter, _) = prepaint.shaped_lines[i];
+                let y = bounds.origin.y + px(i as f32 * LINE_HEIGHT);
+                let is_discarded = self.staging.is_line_discarded(line);
                 if let Some(sg) = shaped_gutter {
                     let gx = bounds.origin.x + px(GUTTER_WIDTH) - sg.width - px(4.0);
                     let _ = sg.paint(point(gx, y), line_h, window, cx);
+                    if is_discarded {
+                        window.paint_quad(fill(
+                            Bounds {
+                                origin: point(bounds.origin.x + px(CHECKBOX_COL_WIDTH), y),
+                                size: size(px(LINENO_WIDTH + GUTTER_PAD), line_h),
+                            },
+                            Rgba { r: 0.09, g: 0.09, b: 0.11, a: 0.7 },
+                        ));
+                    }
                 }
             }
             let sep_x = bounds.origin.x + px(GUTTER_WIDTH + GUTTER_PAD / 2.0);
@@ -770,7 +915,35 @@ impl Element for DiffBlock {
             });
         }
 
-        // 5) Selection mouse handlers
+        // 5) Checkbox click handler (toggle line staging)
+        {
+            let staging = self.staging.clone();
+            let lines_for_cb = self.lines.clone();
+            let bounds_for_cb = bounds;
+            let line_count_for_cb = line_count;
+            let checkbox_right = bounds.origin.x + px(CHECKBOX_COL_WIDTH);
+
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                if !phase.bubble() { return; }
+                if event.button != MouseButton::Left { return; }
+                if event.position.x >= checkbox_right { return; }
+                if event.position.x < bounds_for_cb.origin.x { return; }
+                if event.position.y < bounds_for_cb.origin.y { return; }
+
+                let rel_y = f32::from(event.position.y - bounds_for_cb.origin.y);
+                let line_idx = (rel_y / LINE_HEIGHT) as usize;
+                if line_idx >= line_count_for_cb { return; }
+
+                let line = &lines_for_cb[line_idx];
+                if let (Some(h), Some(l)) = (line.hunk_idx, line.line_idx) {
+                    staging.toggle(h, l);
+                    cx.stop_propagation();
+                    window.refresh();
+                }
+            });
+        }
+
+        // 6) Selection mouse handlers
         {
             let selection = self.selection.clone();
             let bounds_for_sel = bounds;
@@ -929,7 +1102,7 @@ impl Element for DiffBlock {
 
         }
 
-        // 6) Scroll wheel handler
+        // 7) Scroll wheel handler
         let scroll = self.scroll.clone();
         let hitbox_id = prepaint.hitbox.id;
         let content_w = prepaint.content_width;
@@ -993,6 +1166,18 @@ fn line_colors(line: &DiffDisplayLine) -> (Rgba, Option<Rgba>) {
     }
 }
 
+/// Staging-aware variant of `line_colors`. When a paired deletion's
+/// addition is discarded, the deletion is being kept -- render it as
+/// context (no red background) instead of as a deletion.
+fn staged_line_colors(line: &DiffDisplayLine, staging: &LineStagingState) -> (Rgba, Option<Rgba>) {
+    if let Some((h, l)) = line.paired_addition {
+        if staging.is_discarded(h, l) {
+            return (t::text_muted(), None);
+        }
+    }
+    line_colors(line)
+}
+
 fn scrollbar_is_visible(scroll: &DiffScrollState) -> bool {
     let s = scroll.get();
     if s.dragging || s.hovered { return true; }
@@ -1031,12 +1216,14 @@ pub struct FileSectionParams<'a> {
     pub highlights: Option<&'a Arc<HighlightCache>>,
     pub scroll: &'a DiffScrollState,
     pub selection: &'a SelectionState,
+    pub staging: &'a LineStagingState,
     pub expanded: &'a Rc<Cell<bool>>,
     pub focus_handle: &'a FocusHandle,
     pub char_width_cache: &'a Rc<Cell<Option<Pixels>>>,
     pub parent_scroll: Option<&'a ScrollHandle>,
     pub on_keep: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     pub on_discard: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    pub on_apply: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
 }
 
 pub fn render_file_section(p: FileSectionParams) -> Stateful<Div> {
@@ -1060,7 +1247,8 @@ pub fn render_file_section(p: FileSectionParams) -> Stateful<Div> {
         });
     }
 
-    el = el.child(render_header(p.path, p.status, &p.stats, p.expanded, p.on_discard, p.on_keep));
+    let has_partial = p.staging.has_any_discarded();
+    el = el.child(render_header(p.path, p.status, &p.stats, p.expanded, p.on_discard, p.on_keep, p.on_apply, has_partial));
 
     if !p.expanded.get() {
         return el;
@@ -1083,6 +1271,7 @@ pub fn render_file_section(p: FileSectionParams) -> Stateful<Div> {
                         p.highlights.cloned(),
                         p.scroll.clone(),
                         p.selection.clone(),
+                        p.staging.clone(),
                         p.parent_scroll.cloned(),
                         p.focus_handle.clone(),
                         p.char_width_cache.clone(),
@@ -1102,6 +1291,8 @@ fn render_header(
     expanded: &Rc<Cell<bool>>,
     on_discard: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     on_keep: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    on_apply: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    has_partial: bool,
 ) -> impl IntoElement {
     let is_expanded = expanded.get();
     let chevron_icon = if is_expanded {
@@ -1185,18 +1376,35 @@ fn render_header(
             })
             .child("Discard"),
     );
-    h = h.child(
-        div().id(SharedString::from(format!("keep-{}", path)))
-            .px_1p5().py(px(2.0)).rounded(px(3.0))
-            .text_xs().text_color(t::text_dim()).flex_shrink_0()
-            .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .hover(|s: StyleRefinement| s.bg(t::bg_hover()).text_color(t::diff_add_text()))
-            .on_click(move |event, window, cx| {
-                on_keep(event, window, cx);
-            })
-            .child("Keep"),
-    );
+    if has_partial {
+        h = h.child(
+            div().id(SharedString::from(format!("apply-{}", path)))
+                .px_1p5().py(px(2.0)).rounded(px(3.0))
+                .text_xs().font_weight(FontWeight::MEDIUM)
+                .text_color(t::text_secondary()).bg(t::bg_active())
+                .flex_shrink_0()
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .hover(|s: StyleRefinement| s.bg(t::bg_selected()))
+                .on_click(move |event, window, cx| {
+                    on_apply(event, window, cx);
+                })
+                .child("Apply"),
+        );
+    } else {
+        h = h.child(
+            div().id(SharedString::from(format!("keep-{}", path)))
+                .px_1p5().py(px(2.0)).rounded(px(3.0))
+                .text_xs().text_color(t::text_dim()).flex_shrink_0()
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .hover(|s: StyleRefinement| s.bg(t::bg_hover()).text_color(t::diff_add_text()))
+                .on_click(move |event, window, cx| {
+                    on_keep(event, window, cx);
+                })
+                .child("Keep"),
+        );
+    }
 
     h
 }

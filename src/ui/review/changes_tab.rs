@@ -9,6 +9,8 @@ use gpui::prelude::FluentBuilder as _;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+type DiscardedLines = HashSet<(usize, usize)>;
+
 pub struct ChangesTab {
     pub changed_files: Vec<ChangedFile>,
     file_views: HashMap<String, Entity<FileRowView>>,
@@ -38,6 +40,7 @@ pub enum FileStatus {
 pub struct RowCallbacks {
     pub on_keep: Box<dyn Fn(&str, FileStatus, &mut App) + 'static>,
     pub on_discard: Box<dyn Fn(&str, &mut App) + 'static>,
+    pub on_apply: Box<dyn Fn(&str, DiscardedLines, &mut App) + 'static>,
     pub on_empty: Box<dyn Fn(&str, &mut App) + 'static>,
 }
 
@@ -153,12 +156,12 @@ impl ChangesTab {
         let total_add: usize = self
             .file_views
             .values()
-            .filter_map(|v| v.read(cx).stats().map(|s| s.additions))
+            .filter_map(|v| v.read(cx).effective_stats().map(|s| s.additions))
             .sum();
         let total_del: usize = self
             .file_views
             .values()
-            .filter_map(|v| v.read(cx).stats().map(|s| s.deletions))
+            .filter_map(|v| v.read(cx).effective_stats().map(|s| s.deletions))
             .sum();
         let file_count = self.changed_files.len();
 
@@ -351,6 +354,7 @@ impl ChangesTab {
         let panel = cx.weak_entity();
         let panel_keep = panel.clone();
         let panel_discard = panel.clone();
+        let panel_apply = panel.clone();
         let panel_empty = panel;
         Rc::new(RowCallbacks {
             on_keep: Box::new(move |path: &str, status: FileStatus, cx: &mut App| {
@@ -379,6 +383,21 @@ impl ChangesTab {
                             cx.notify();
                             let p = path.clone();
                             svc.spawn(move |s| async move { s.discard_file(&p).await });
+                        }
+                    });
+                }
+            }),
+            on_apply: Box::new(move |path: &str, discarded: DiscardedLines, cx: &mut App| {
+                let panel = panel_apply.upgrade();
+                let path = path.to_string();
+                if let Some(panel) = panel {
+                    panel.update(cx, |panel, cx| {
+                        let svc = panel.changes_tab.service.clone();
+                        if let Some(svc) = svc {
+                            panel.changes_tab.suppress_file(&path);
+                            cx.notify();
+                            let p = path.clone();
+                            svc.spawn(move |s| async move { s.apply_partial(&p, discarded).await });
                         }
                     });
                 }

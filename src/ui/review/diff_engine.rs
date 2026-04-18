@@ -1,5 +1,6 @@
 use shuru_sdk::AsyncSandbox;
 use similar::{ChangeTag, TextDiff};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -44,6 +45,43 @@ impl FileDiff {
 pub struct DiffStats {
     pub additions: usize,
     pub deletions: usize,
+}
+
+/// Compute effective stats given partial staging. Discarded lines don't
+/// count. For replacement pairs, both the addition and deletion only
+/// count when the addition is kept.
+pub fn effective_stats(hunks: &[DiffHunk], discarded: &HashSet<(usize, usize)>) -> DiffStats {
+    let mut additions = 0usize;
+    let mut deletions = 0usize;
+
+    for (hunk_idx, hunk) in hunks.iter().enumerate() {
+        let pairs = find_replacement_pairs(&hunk.lines);
+        let paired_del_set: HashSet<usize> = pairs.iter().map(|(d, _)| *d).collect();
+        let add_to_del: HashMap<usize, usize> = pairs.iter().map(|(d, a)| (*a, *d)).collect();
+
+        for (line_idx, line) in hunk.lines.iter().enumerate() {
+            match line.kind {
+                DiffLineKind::Context => {}
+                DiffLineKind::Addition => {
+                    if !discarded.contains(&(hunk_idx, line_idx)) {
+                        additions += 1;
+                        if add_to_del.contains_key(&line_idx) {
+                            deletions += 1;
+                        }
+                    }
+                }
+                DiffLineKind::Deletion => {
+                    if !paired_del_set.contains(&line_idx)
+                        && !discarded.contains(&(hunk_idx, line_idx))
+                    {
+                        deletions += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    DiffStats { additions, deletions }
 }
 
 pub async fn read_host_file(
@@ -202,5 +240,155 @@ pub fn compute_file_diff(old: &[u8], new: &[u8]) -> FileDiff {
         hunks,
         is_binary: false,
     }
+}
+
+/// Within a hunk, find replacement pairs: consecutive deletion lines
+/// immediately followed by consecutive addition lines form a replacement
+/// block. Returns `(del_line_idx, add_line_idx)` pairs, matched 1:1.
+/// Excess deletions or additions beyond the shorter side are unpaired.
+pub fn find_replacement_pairs(lines: &[DiffLine]) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        if lines[i].kind != DiffLineKind::Deletion {
+            i += 1;
+            continue;
+        }
+
+        let del_start = i;
+        while i < lines.len() && lines[i].kind == DiffLineKind::Deletion {
+            i += 1;
+        }
+        let del_count = i - del_start;
+
+        if i >= lines.len() || lines[i].kind != DiffLineKind::Addition {
+            continue;
+        }
+
+        let add_start = i;
+        while i < lines.len() && lines[i].kind == DiffLineKind::Addition {
+            i += 1;
+        }
+        let add_count = i - add_start;
+
+        let pair_count = del_count.min(add_count);
+        for j in 0..pair_count {
+            pairs.push((del_start + j, add_start + j));
+        }
+    }
+
+    pairs
+}
+
+/// Reconstruct a file by partially applying a diff.
+///
+/// Replacement pairs (deletion+addition that represent a line change) are
+/// treated atomically: only the addition's discard state matters. If the
+/// addition is kept, the new line replaces the old. If discarded, the old
+/// line is preserved. The paired deletion has no independent toggle.
+///
+/// Unpaired lines follow simple rules:
+/// - discarded Addition  -> omitted
+/// - discarded Deletion  -> restored (original line kept)
+/// - kept Addition       -> included
+/// - kept Deletion       -> omitted (line stays deleted)
+/// - Context             -> always included
+pub fn reconstruct_partial(
+    old: &str,
+    hunks: &[DiffHunk],
+    discarded: &HashSet<(usize, usize)>,
+) -> String {
+    let old_lines: Vec<&str> = old.split('\n').collect();
+    let mut result: Vec<&str> = Vec::new();
+    let mut old_pos: usize = 0;
+
+    for (hunk_idx, hunk) in hunks.iter().enumerate() {
+        let hunk_old_start = if hunk.old_start > 0 { hunk.old_start - 1 } else { 0 };
+
+        while old_pos < hunk_old_start && old_pos < old_lines.len() {
+            result.push(old_lines[old_pos]);
+            old_pos += 1;
+        }
+
+        let pairs = find_replacement_pairs(&hunk.lines);
+        let paired_del_set: HashSet<usize> = pairs.iter().map(|(d, _)| *d).collect();
+        let add_to_del: HashMap<usize, usize> = pairs.iter().map(|(d, a)| (*a, *d)).collect();
+        let mut saved_old: HashMap<usize, &str> = HashMap::new();
+
+        for (line_idx, line) in hunk.lines.iter().enumerate() {
+            match line.kind {
+                DiffLineKind::Context => {
+                    result.push(old_lines.get(old_pos).copied().unwrap_or(""));
+                    old_pos += 1;
+                }
+                DiffLineKind::Deletion => {
+                    if paired_del_set.contains(&line_idx) {
+                        saved_old.insert(line_idx, old_lines.get(old_pos).copied().unwrap_or(""));
+                        old_pos += 1;
+                    } else {
+                        let is_discarded = discarded.contains(&(hunk_idx, line_idx));
+                        if is_discarded {
+                            result.push(old_lines.get(old_pos).copied().unwrap_or(""));
+                        }
+                        old_pos += 1;
+                    }
+                }
+                DiffLineKind::Addition => {
+                    let is_discarded = discarded.contains(&(hunk_idx, line_idx));
+                    if let Some(&del_idx) = add_to_del.get(&line_idx) {
+                        if is_discarded {
+                            if let Some(old_line) = saved_old.get(&del_idx) {
+                                result.push(old_line);
+                            }
+                        } else {
+                            result.push(line.content.trim_end_matches('\n'));
+                        }
+                    } else {
+                        if !is_discarded {
+                            result.push(line.content.trim_end_matches('\n'));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    while old_pos < old_lines.len() {
+        result.push(old_lines[old_pos]);
+        old_pos += 1;
+    }
+
+    result.join("\n")
+}
+
+pub async fn write_to_both(
+    rel_path: &str,
+    content: &[u8],
+    host_mount_path: &str,
+    sandbox: &Arc<AsyncSandbox>,
+) -> Result<(), String> {
+    if rel_path.contains("..") {
+        return Err("path contains '..'".into());
+    }
+    if rel_path.starts_with(".git/") || rel_path == ".git" {
+        return Err("refusing to write to .git".into());
+    }
+
+    let host_path = format!("{}/{}", host_mount_path, rel_path);
+    let sandbox_path = format!("/workspace/{}", rel_path);
+
+    if let Some(parent) = std::path::Path::new(&host_path).parent() {
+        tokio::fs::create_dir_all(parent).await
+            .map_err(|e| format!("create dirs: {e}"))?;
+    }
+
+    tokio::fs::write(&host_path, content).await
+        .map_err(|e| format!("write host file: {e}"))?;
+
+    sandbox.write_file(&sandbox_path, content).await
+        .map_err(|e| format!("write sandbox file: {e}"))?;
+
+    Ok(())
 }
 

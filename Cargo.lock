@@ -5664,7 +5664,7 @@ dependencies = [
 
 [[package]]
 name = "shuru-linux"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "kvm-bindings",
@@ -5731,7 +5731,7 @@ dependencies = [
 
 [[package]]
 name = "shuru-vm"
-version = "0.3.4"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "crossbeam-channel",

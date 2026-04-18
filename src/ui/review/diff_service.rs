@@ -1,6 +1,7 @@
 use super::changes_tab::FileStatus;
 use super::diff_engine::{self, DiffStats, FileDiff};
 use shuru_sdk::AsyncSandbox;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Manages sandbox references and async diff/file operations for the review panel.
@@ -91,5 +92,27 @@ impl DiffService {
     pub async fn discard_file(&self, path: &str) {
         let full = format!("/workspace/{}", path);
         let _ = self.sandbox.discard_overlay(&full).await;
+    }
+
+    /// Apply a partial diff: keep some lines, discard others.
+    /// Reads both files, reconstructs with the given line selections,
+    /// then writes the result to both host and sandbox.
+    pub async fn apply_partial(&self, path: &str, discarded: HashSet<(usize, usize)>) {
+        let old = match self.host_mount_path.as_deref() {
+            Some(host) => diff_engine::read_host_file(path, host).await,
+            None => None,
+        };
+        let new = diff_engine::read_sandbox_file(path, "/workspace", &self.sandbox).await;
+
+        let old_bytes = old.unwrap_or_default();
+        let new_bytes = new.unwrap_or_default();
+        let diff = diff_engine::compute_file_diff(&old_bytes, &new_bytes);
+
+        let old_text = String::from_utf8_lossy(&old_bytes);
+        let result = diff_engine::reconstruct_partial(&old_text, &diff.hunks, &discarded);
+
+        if let Some(ref host) = self.host_mount_path {
+            let _ = diff_engine::write_to_both(path, result.as_bytes(), host, &self.sandbox).await;
+        }
     }
 }

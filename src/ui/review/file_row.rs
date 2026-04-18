@@ -1,7 +1,7 @@
 use super::changes_tab::{FileStatus, RowCallbacks};
-use super::diff_engine::{DiffStats, FileDiff};
+use super::diff_engine::{self, DiffStats, FileDiff};
 use super::diff_service::DiffService;
-use super::diff_view::{self, DiffDisplayLine, DiffScrollState, SelectionState, HighlightCache};
+use super::diff_view::{self, DiffDisplayLine, DiffScrollState, SelectionState, LineStagingState, HighlightCache};
 use gpui::*;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -30,6 +30,7 @@ pub struct FileRowView {
 
     scroll: DiffScrollState,
     selection: SelectionState,
+    staging: LineStagingState,
     expanded: Rc<Cell<bool>>,
     focus: FocusHandle,
     char_width_cache: Rc<Cell<Option<Pixels>>>,
@@ -60,6 +61,7 @@ impl FileRowView {
             diffing: false,
             scroll: DiffScrollState::new(),
             selection: SelectionState::new(),
+            staging: LineStagingState::new(),
             expanded: Rc::new(Cell::new(false)),
             focus: cx.focus_handle(),
             char_width_cache: Rc::new(Cell::new(None)),
@@ -68,8 +70,13 @@ impl FileRowView {
         row
     }
 
-    pub fn stats(&self) -> Option<&DiffStats> {
-        self.stats.as_ref()
+    pub fn effective_stats(&self) -> Option<DiffStats> {
+        if self.staging.has_any_discarded() {
+            if let Some(ref d) = self.diff {
+                return Some(diff_engine::effective_stats(&d.hunks, &self.staging.snapshot()));
+            }
+        }
+        self.stats.clone()
     }
 
     pub fn selection(&self) -> &SelectionState {
@@ -98,6 +105,7 @@ impl FileRowView {
         self.diff = None;
         self.display_lines = None;
         self.highlights = None;
+        self.staging.clear();
     }
 
     fn kick_stats(&mut self, cx: &mut Context<Self>) {
@@ -193,7 +201,15 @@ impl Render for FileRowView {
             }
         }
 
-        let stats = self.stats.clone().unwrap_or_default();
+        let stats = if self.staging.has_any_discarded() {
+            if let Some(ref d) = self.diff {
+                diff_engine::effective_stats(&d.hunks, &self.staging.snapshot())
+            } else {
+                self.stats.clone().unwrap_or_default()
+            }
+        } else {
+            self.stats.clone().unwrap_or_default()
+        };
         let diff = self.diff.as_ref();
         let lines = self.display_lines.as_ref();
         let highlights = if self.expanded.get() {
@@ -219,6 +235,15 @@ impl Render for FileRowView {
                 (cb.on_discard)(&path, cx);
             })
         };
+        let on_apply: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> = {
+            let path = path.clone();
+            let cb = self.callbacks.clone();
+            let staging = self.staging.clone();
+            Box::new(move |_: &ClickEvent, _window, cx| {
+                let discarded = staging.snapshot();
+                (cb.on_apply)(&path, discarded, cx);
+            })
+        };
 
         diff_view::render_file_section(diff_view::FileSectionParams {
             path: &self.path,
@@ -229,12 +254,14 @@ impl Render for FileRowView {
             highlights,
             scroll: &self.scroll,
             selection: &self.selection,
+            staging: &self.staging,
             expanded: &self.expanded,
             focus_handle: &self.focus,
             char_width_cache: &self.char_width_cache,
             parent_scroll: Some(&self.parent_scroll),
             on_keep,
             on_discard,
+            on_apply,
         })
     }
 }
