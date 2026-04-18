@@ -107,6 +107,17 @@ impl AppView {
         terminal.update(cx, |panel, _| {
             panel.set_side_panel(review.clone());
         });
+        // Wire "Ask Agent": review panel sends text to the active terminal
+        {
+            let terminal_for_ask = terminal.clone();
+            review.update(cx, |sp, _| {
+                sp.set_on_ask_agent(move |msg, cx| {
+                    terminal_for_ask.update(cx, |panel, cx| {
+                        panel.send_to_active_terminal(&msg, cx);
+                    });
+                });
+            });
+        }
         let this = cx.entity().downgrade();
         let sidebar = cx.new(|cx| {
             WorkspaceListView::new(

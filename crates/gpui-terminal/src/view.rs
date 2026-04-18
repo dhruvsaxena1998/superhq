@@ -789,6 +789,25 @@ impl TerminalView {
         let _ = writer.flush();
     }
 
+    /// Write text to the terminal as if pasted, using bracketed paste if
+    /// the terminal supports it. Appends Enter (`\r`) after the text so
+    /// the shell/agent processes it immediately.
+    pub fn write_input(&self, text: &str) {
+        if text.is_empty() { return; }
+        let bracketed = self.state.content.mode
+            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+        if bracketed {
+            let filtered = text.replace(['\x1b', '\x03'], "");
+            self.write_to_pty(b"\x1b[200~");
+            self.write_to_pty(filtered.as_bytes());
+            self.write_to_pty(b"\x1b[201~");
+        } else {
+            let normalized = text.replace("\r\n", "\r").replace('\n', "\r");
+            self.write_to_pty(normalized.as_bytes());
+        }
+        self.write_to_pty(b"\r");
+    }
+
     /// Copy current selection to clipboard (trimming trailing whitespace per line).
     fn copy_selection(&self, cx: &App) {
         // Read selection text fresh from the term (not from the cached snapshot,

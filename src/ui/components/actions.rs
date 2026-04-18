@@ -24,6 +24,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(KEY_ENTER, Confirm, Some("Select")),
         // Text input
         KeyBinding::new(KEY_ESCAPE, Cancel, Some("TextInput")),
+        KeyBinding::new(KEY_ENTER, Confirm, Some("TextInput")),
         // Button
         KeyBinding::new(KEY_ENTER, Confirm, Some("Button")),
         KeyBinding::new(KEY_SPACE, Confirm, Some("Button")),

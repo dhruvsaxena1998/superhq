@@ -71,6 +71,7 @@ impl DiffService {
         )
     }
 
+
     /// Keep a file change — copy to host or delete host file.
     pub async fn keep_file(&self, path: &str, status: FileStatus) {
         match status {

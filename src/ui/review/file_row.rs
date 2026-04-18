@@ -71,7 +71,7 @@ impl FileRowView {
     }
 
     pub fn effective_stats(&self) -> Option<DiffStats> {
-        if self.staging.has_any_discarded() {
+        if self.status == FileStatus::Modified && self.staging.has_any_discarded() {
             if let Some(ref d) = self.diff {
                 return Some(diff_engine::effective_stats(&d.hunks, &self.staging.snapshot()));
             }
@@ -121,7 +121,9 @@ impl FileRowView {
             let _ = cx.update(|cx| {
                 this.update(cx, |row, cx| {
                     let empty = !is_binary && stats.additions == 0 && stats.deletions == 0;
-                    if empty {
+                    // For Added/Deleted, existence is the change. Only drop
+                    // Modified files that turn out to have no content diff.
+                    if empty && row.status == FileStatus::Modified {
                         (row.callbacks.on_empty)(&row.path, cx);
                     } else {
                         row.stats_loading = false;
@@ -147,7 +149,7 @@ impl FileRowView {
             let lines = Arc::new(diff_view::collect_lines(&diff.hunks));
             let _ = cx.update(|cx| {
                 this.update(cx, |row, cx| {
-                    if diff.is_empty() {
+                    if diff.is_empty() && row.status == FileStatus::Modified {
                         (row.callbacks.on_empty)(&row.path, cx);
                         return;
                     }

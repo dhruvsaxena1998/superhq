@@ -35,6 +35,8 @@ pub struct TerminalPanel {
     pub(super) skip_secret_check: bool,
     pub(super) on_open_settings: Option<Arc<dyn Fn(&mut Window, &mut App) + 'static>>,
     pub(super) on_open_port_dialog: Option<Arc<dyn Fn(i64, Option<Arc<AsyncSandbox>>, tokio::runtime::Handle, &mut Window, &mut App) + 'static>>,
+    #[allow(dead_code)]
+    pub(super) on_ask_agent: Option<Arc<dyn Fn(String, &mut App) + 'static>>,
     pub(super) side_panel: Option<Entity<SidePanel>>,
     pub show_tab_badges: bool,
     pub(super) last_theme_gen: u64,
@@ -71,6 +73,7 @@ impl TerminalPanel {
             skip_secret_check: false,
             on_open_settings: None,
             on_open_port_dialog: None,
+            on_ask_agent: None,
             side_panel: None,
             show_tab_badges: false,
             last_theme_gen: crate::ui::theme::theme_generation(),

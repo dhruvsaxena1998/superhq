@@ -49,6 +49,7 @@ pub struct SidePanel {
     sandbox_changes: HashMap<usize, ChangesTab>,
     /// Per-sandbox watchers, kept alive as long as the sandbox exists.
     sandbox_watchers: HashMap<usize, SandboxWatcher>,
+    on_ask_agent: Option<Arc<dyn Fn(String, &mut App) + 'static>>,
 }
 
 impl SidePanel {
@@ -65,7 +66,14 @@ impl SidePanel {
             cache: HashMap::new(),
             sandbox_changes: HashMap::new(),
             sandbox_watchers: HashMap::new(),
+            on_ask_agent: None,
         }
+    }
+
+    pub fn set_on_ask_agent(&mut self, cb: impl Fn(String, &mut App) + 'static) {
+        let arc = Arc::new(cb);
+        self.on_ask_agent = Some(arc.clone());
+        self.changes_tab.on_ask_agent = Some(arc);
     }
 
     pub fn on_sandbox_ready(
@@ -84,6 +92,7 @@ impl SidePanel {
                 self.host_mount_path.clone(),
                 tokio_handle.clone(),
             ));
+            tab.on_ask_agent = self.on_ask_agent.clone();
             self.sandbox_changes.insert(key, tab);
             self.start_sandbox_watcher(key, sandbox.clone(), tokio_handle.clone(), cx);
         }

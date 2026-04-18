@@ -62,6 +62,31 @@ impl super::TerminalPanel {
         self.on_open_port_dialog = Some(Arc::new(cb));
     }
 
+    #[allow(dead_code)]
+    pub fn set_on_ask_agent(&mut self, cb: impl Fn(String, &mut App) + 'static) {
+        self.on_ask_agent = Some(Arc::new(cb));
+    }
+
+    pub fn send_to_active_terminal(&self, text: &str, cx: &mut Context<Self>) {
+        let Some(ws_id) = self.active_workspace_id else { return };
+        let Some(session) = self.sessions.get(&ws_id) else { return };
+        // Find the first agent tab and activate it, then send the text.
+        let (agent_idx, terminal) = {
+            let s = session.read(cx);
+            let idx = s.tabs.iter().position(|t| {
+                matches!(&t.kind, super::session::TabKind::Agent { .. })
+            });
+            let term = idx.and_then(|i| s.tabs[i].terminal.clone());
+            (idx, term)
+        };
+        if let (Some(idx), Some(terminal)) = (agent_idx, terminal) {
+            session.update(cx, |s, cx| { s.activate_tab(idx, cx); });
+            terminal.update(cx, |view, _cx| {
+                view.write_input(text);
+            });
+        }
+    }
+
     // --- Setup progress helpers ---
 
     pub(super) fn update_step_label(&mut self, ws_id: i64, tab_id: u64, step_idx: usize, label: SharedString, cx: &mut App) {

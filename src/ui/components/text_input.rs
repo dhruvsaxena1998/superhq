@@ -12,7 +12,7 @@ use gpui::{
 use unicode_segmentation::*;
 
 use crate::ui::theme as t;
-use super::actions::Cancel;
+use super::actions::{Cancel, Confirm};
 use super::context_menu::{ContextMenu, MenuEntry, MenuItem};
 
 const MASK_CHAR: &str = "\u{2022}";
@@ -325,9 +325,12 @@ impl TextInput {
             self.context_menu = None;
             cx.notify();
         } else {
-            // Nothing to dismiss — let it bubble to the parent (e.g., dialog)
             cx.propagate();
         }
+    }
+
+    fn confirm(&mut self, _: &Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(TextInputEvent::Submit(self.content.clone()));
     }
 
     fn on_mouse_down(&mut self, event: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -924,6 +927,7 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
             .on_action(cx.listener(Self::select_left))

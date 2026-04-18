@@ -377,6 +377,7 @@ pub struct DiffBlock {
     scroll: DiffScrollState,
     selection: SelectionState,
     staging: LineStagingState,
+    staging_enabled: bool,
     parent_scroll: Option<ScrollHandle>,
     focus_handle: FocusHandle,
     char_width_cache: Rc<Cell<Option<Pixels>>>,
@@ -390,11 +391,12 @@ impl DiffBlock {
         scroll: DiffScrollState,
         selection: SelectionState,
         staging: LineStagingState,
+        staging_enabled: bool,
         parent_scroll: Option<ScrollHandle>,
         focus_handle: FocusHandle,
         char_width_cache: Rc<Cell<Option<Pixels>>>,
     ) -> Self {
-        Self { id, lines, highlights, scroll, selection, staging, parent_scroll, focus_handle, char_width_cache }
+        Self { id, lines, highlights, scroll, selection, staging, staging_enabled, parent_scroll, focus_handle, char_width_cache }
     }
 }
 
@@ -406,6 +408,7 @@ pub struct DiffPrepaint {
     char_width: Pixels,
     content_width: Pixels,
     thumb_bounds: Option<ThumbGeometry>,
+    gutter_w: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -536,9 +539,10 @@ impl Element for DiffBlock {
             shaped_lines.push((line.clone(), shaped_gutter, shaped_content));
         }
 
+        let gutter_w = if self.staging_enabled { GUTTER_WIDTH } else { LINENO_WIDTH };
         let content_width = max_content_w + px(CONTENT_PAD + 16.0);
-        let gutter_x_end = bounds.origin.x + px(GUTTER_WIDTH + GUTTER_PAD);
-        let content_area_w = bounds.size.width - px(GUTTER_WIDTH + GUTTER_PAD);
+        let gutter_x_end = bounds.origin.x + px(gutter_w + GUTTER_PAD);
+        let content_area_w = bounds.size.width - px(gutter_w + GUTTER_PAD);
 
         let max_scroll_x = (f32::from(content_width) - f32::from(content_area_w)).max(0.0);
         let mut s = self.scroll.get();
@@ -600,6 +604,7 @@ impl Element for DiffBlock {
             content_width,
             thumb_bounds,
             char_width,
+            gutter_w,
         }
     }
 
@@ -616,12 +621,13 @@ impl Element for DiffBlock {
         let line_h = px(LINE_HEIGHT);
         let s = self.scroll.get();
         let scroll_x = px(s.offset_x);
-        let gutter_x_end = bounds.origin.x + px(GUTTER_WIDTH + GUTTER_PAD);
+        let gutter_w = prepaint.gutter_w;
+        let gutter_x_end = bounds.origin.x + px(gutter_w + GUTTER_PAD);
         let line_count = prepaint.shaped_lines.len();
 
         let content_bounds = Bounds {
             origin: point(gutter_x_end, bounds.origin.y),
-            size: size(bounds.size.width - px(GUTTER_WIDTH + GUTTER_PAD), bounds.size.height),
+            size: size(bounds.size.width - px(gutter_w + GUTTER_PAD), bounds.size.height),
         };
 
         // 1) Line backgrounds (full width, dimmed for discarded lines)
@@ -728,10 +734,11 @@ impl Element for DiffBlock {
             }
         });
 
-        // 3) Gutter overlay (fixed, on top) with checkbox column
+        // 3) Gutter overlay (fixed, on top) with optional checkbox column
+        let checkbox_col = if self.staging_enabled { CHECKBOX_COL_WIDTH } else { 0.0 };
         let gutter_bounds = Bounds {
             origin: bounds.origin,
-            size: size(px(GUTTER_WIDTH + GUTTER_PAD), bounds.size.height),
+            size: size(px(gutter_w + GUTTER_PAD), bounds.size.height),
         };
         window.with_content_mask(Some(ContentMask { bounds: gutter_bounds }), |window| {
             window.paint_quad(fill(gutter_bounds, t::bg_base()));
@@ -749,49 +756,51 @@ impl Element for DiffBlock {
                     window.paint_quad(fill(
                         Bounds {
                             origin: point(bounds.origin.x, y),
-                            size: size(px(GUTTER_WIDTH + GUTTER_PAD), line_h),
+                            size: size(px(gutter_w + GUTTER_PAD), line_h),
                         },
                         bg_color,
                     ));
                 }
             }
-            // Checkboxes for addition/deletion lines
-            let checkbox_size = px(7.0);
-            let checkbox_x = bounds.origin.x + px(CHECKBOX_COL_WIDTH / 2.0) - checkbox_size / 2.0;
-            for i in 0..line_count {
-                let (ref line, _, _) = prepaint.shaped_lines[i];
-                if line.hunk_idx.is_none() { continue; }
-                let y = bounds.origin.y + px(i as f32 * LINE_HEIGHT);
-                let checkbox_y = y + line_h / 2.0 - checkbox_size / 2.0;
-                let is_discarded = self.staging.is_line_discarded(line);
-                let cb_bounds = Bounds {
-                    origin: point(checkbox_x, checkbox_y),
-                    size: size(checkbox_size, checkbox_size),
-                };
-                let (fg, _) = staged_line_colors(line, &self.staging);
-                if is_discarded {
-                    let ghost: Hsla = t::text_ghost().into();
-                    window.paint_quad(
-                        quad(cb_bounds, px(2.0), Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }, px(1.0), ghost, BorderStyle::Solid),
-                    );
-                } else {
-                    window.paint_quad(
-                        fill(cb_bounds, fg).corner_radii(px(2.0)),
-                    );
+            // Checkboxes for addition/deletion lines (only when staging is enabled)
+            if self.staging_enabled {
+                let checkbox_size = px(7.0);
+                let checkbox_x = bounds.origin.x + px(CHECKBOX_COL_WIDTH / 2.0) - checkbox_size / 2.0;
+                for i in 0..line_count {
+                    let (ref line, _, _) = prepaint.shaped_lines[i];
+                    if line.hunk_idx.is_none() { continue; }
+                    let y = bounds.origin.y + px(i as f32 * LINE_HEIGHT);
+                    let checkbox_y = y + line_h / 2.0 - checkbox_size / 2.0;
+                    let is_discarded = self.staging.is_line_discarded(line);
+                    let cb_bounds = Bounds {
+                        origin: point(checkbox_x, checkbox_y),
+                        size: size(checkbox_size, checkbox_size),
+                    };
+                    let (fg, _) = staged_line_colors(line, &self.staging);
+                    if is_discarded {
+                        let ghost: Hsla = t::text_ghost().into();
+                        window.paint_quad(
+                            quad(cb_bounds, px(2.0), Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }, px(1.0), ghost, BorderStyle::Solid),
+                        );
+                    } else {
+                        window.paint_quad(
+                            fill(cb_bounds, fg).corner_radii(px(2.0)),
+                        );
+                    }
                 }
             }
-            // Line numbers (offset right by checkbox column)
+            // Line numbers (offset right by checkbox column when enabled)
             for i in 0..line_count {
                 let (ref line, ref shaped_gutter, _) = prepaint.shaped_lines[i];
                 let y = bounds.origin.y + px(i as f32 * LINE_HEIGHT);
                 let is_discarded = self.staging.is_line_discarded(line);
                 if let Some(sg) = shaped_gutter {
-                    let gx = bounds.origin.x + px(GUTTER_WIDTH) - sg.width - px(4.0);
+                    let gx = bounds.origin.x + px(gutter_w) - sg.width - px(4.0);
                     let _ = sg.paint(point(gx, y), line_h, window, cx);
                     if is_discarded {
                         window.paint_quad(fill(
                             Bounds {
-                                origin: point(bounds.origin.x + px(CHECKBOX_COL_WIDTH), y),
+                                origin: point(bounds.origin.x + px(checkbox_col), y),
                                 size: size(px(LINENO_WIDTH + GUTTER_PAD), line_h),
                             },
                             Rgba { r: 0.09, g: 0.09, b: 0.11, a: 0.7 },
@@ -799,7 +808,7 @@ impl Element for DiffBlock {
                     }
                 }
             }
-            let sep_x = bounds.origin.x + px(GUTTER_WIDTH + GUTTER_PAD / 2.0);
+            let sep_x = bounds.origin.x + px(gutter_w + GUTTER_PAD / 2.0);
             window.paint_quad(fill(
                 Bounds {
                     origin: point(sep_x, bounds.origin.y),
@@ -915,8 +924,8 @@ impl Element for DiffBlock {
             });
         }
 
-        // 5) Checkbox click handler (toggle line staging)
-        {
+        // 5) Checkbox click handler (toggle line staging) -- only when enabled
+        if self.staging_enabled {
             let staging = self.staging.clone();
             let lines_for_cb = self.lines.clone();
             let bounds_for_cb = bounds;
@@ -997,7 +1006,7 @@ impl Element for DiffBlock {
                 let content_left = gutter_x_end;
                 let content_right = bounds.origin.x + bounds.size.width;
                 let max_scroll_x = (f32::from(prepaint.content_width)
-                    - f32::from(bounds.size.width - px(GUTTER_WIDTH + GUTTER_PAD)))
+                    - f32::from(bounds.size.width - px(gutter_w + GUTTER_PAD)))
                     .max(0.0);
                 move |event: &MouseMoveEvent, _phase, window, _cx| {
                     let mut s = selection.get();
@@ -1065,35 +1074,53 @@ impl Element for DiffBlock {
                 }
             });
 
-            // Right-click: show context menu if inside selection, clear otherwise
+            // Right-click: show context menu. If inside an existing selection,
+            // keep it. Otherwise, select the entire clicked line.
             window.on_mouse_event({
                 let selection = selection.clone();
+                let lines = self.lines.clone();
                 let pos_to_lc = pos_to_line_col;
                 move |event: &MouseDownEvent, phase, window, _cx| {
                     if !phase.bubble() { return; }
                     if event.button != MouseButton::Right { return; }
                     let mut s = selection.get();
-                    if !s.has_selection() { return; }
 
-                    let (click_line, click_col) = pos_to_lc(event.position);
-                    let (sl, sc, el, ec) = s.ordered();
+                    let (click_line, _click_col) = pos_to_lc(event.position);
 
-                    let inside = if sl == el {
-                        click_line == sl && click_col >= sc && click_col <= ec
+                    let inside = if s.has_selection() {
+                        let (sl, sc, el, ec) = s.ordered();
+                        let click_col = _click_col;
+                        if sl == el {
+                            click_line == sl && click_col >= sc && click_col <= ec
+                        } else {
+                            (click_line == sl && click_col >= sc)
+                                || (click_line == el && click_col <= ec)
+                                || (click_line > sl && click_line < el)
+                        }
                     } else {
-                        (click_line == sl && click_col >= sc)
-                            || (click_line == el && click_col <= ec)
-                            || (click_line > sl && click_line < el)
+                        false
                     };
 
                     if inside {
                         s.context_menu = Some(event.position);
                     } else {
-                        s.anchor_line = 0;
+                        // Select the entire clicked line. If it's a hunk
+                        // header, advance to the next content line so the
+                        // selection isn't empty after filtering.
+                        let mut target = click_line;
+                        while target < lines.len() && lines[target].is_hunk_header {
+                            target += 1;
+                        }
+                        if target >= lines.len() {
+                            return;
+                        }
+                        let line_len = lines[target].content.len();
+                        s.anchor_line = target;
                         s.anchor_col = 0;
-                        s.end_line = 0;
-                        s.end_col = 0;
-                        s.context_menu = None;
+                        s.end_line = target;
+                        s.end_col = line_len;
+                        s.selecting = false;
+                        s.context_menu = Some(event.position);
                     }
                     selection.set(s);
                     window.refresh();
@@ -1106,7 +1133,7 @@ impl Element for DiffBlock {
         let scroll = self.scroll.clone();
         let hitbox_id = prepaint.hitbox.id;
         let content_w = prepaint.content_width;
-        let content_area_w = bounds.size.width - px(GUTTER_WIDTH + GUTTER_PAD);
+        let content_area_w = bounds.size.width - px(gutter_w + GUTTER_PAD);
 
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, _cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
@@ -1127,7 +1154,7 @@ impl Element for DiffBlock {
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-pub fn copy_selection(sel: &SelectionInner, lines: &[DiffDisplayLine], cx: &mut App) {
+pub fn extract_selection_text(sel: &SelectionInner, lines: &[DiffDisplayLine]) -> String {
     let (sl, sc, el, ec) = sel.ordered();
     let mut text = String::new();
     for i in sl..=el.min(lines.len().saturating_sub(1)) {
@@ -1151,6 +1178,11 @@ pub fn copy_selection(sel: &SelectionInner, lines: &[DiffDisplayLine], cx: &mut 
             text.push('\n');
         }
     }
+    text
+}
+
+pub fn copy_selection(sel: &SelectionInner, lines: &[DiffDisplayLine], cx: &mut App) {
+    let text = extract_selection_text(sel, lines);
     cx.write_to_clipboard(ClipboardItem::new_string(text));
 }
 
@@ -1247,7 +1279,10 @@ pub fn render_file_section(p: FileSectionParams) -> Stateful<Div> {
         });
     }
 
-    let has_partial = p.staging.has_any_discarded();
+    // Line-level staging is only meaningful for Modified files.
+    // Added/Deleted files use whole-file Keep/Discard.
+    let staging_enabled = p.status == FileStatus::Modified;
+    let has_partial = staging_enabled && p.staging.has_any_discarded();
     el = el.child(render_header(p.path, p.status, &p.stats, p.expanded, p.on_discard, p.on_keep, p.on_apply, has_partial));
 
     if !p.expanded.get() {
@@ -1272,6 +1307,7 @@ pub fn render_file_section(p: FileSectionParams) -> Stateful<Div> {
                         p.scroll.clone(),
                         p.selection.clone(),
                         p.staging.clone(),
+                        staging_enabled,
                         p.parent_scroll.cloned(),
                         p.focus_handle.clone(),
                         p.char_width_cache.clone(),

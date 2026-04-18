@@ -3,13 +3,21 @@ use super::diff_view;
 use super::file_row::FileRowView;
 use super::watcher::DiffResult;
 use crate::ui::components::scrollbar::{self, ScrollbarState};
+use crate::ui::components::text_input::{TextInput, TextInputEvent};
 use crate::ui::theme as t;
 use gpui::*;
 use gpui::prelude::FluentBuilder as _;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 type DiscardedLines = HashSet<(usize, usize)>;
+
+struct AskAgentState {
+    position: Point<Pixels>,
+    input: Entity<TextInput>,
+    _subscription: Subscription,
+}
 
 pub struct ChangesTab {
     pub changed_files: Vec<ChangedFile>,
@@ -20,6 +28,8 @@ pub struct ChangesTab {
     pub service: Option<DiffService>,
     scroll_handle: ScrollHandle,
     scrollbar_state: ScrollbarState,
+    ask_agent: Option<AskAgentState>,
+    pub on_ask_agent: Option<Arc<dyn Fn(String, &mut App) + 'static>>,
 }
 
 #[derive(Clone)]
@@ -28,7 +38,7 @@ pub struct ChangedFile {
     pub status: FileStatus,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum FileStatus {
     Modified,
     Added,
@@ -53,6 +63,8 @@ impl ChangesTab {
             service: None,
             scroll_handle: ScrollHandle::new(),
             scrollbar_state: ScrollbarState::new(),
+            ask_agent: None,
+            on_ask_agent: None,
         }
     }
 
@@ -60,6 +72,7 @@ impl ChangesTab {
         self.changed_files.clear();
         self.file_views.clear();
         self.suppressed.clear();
+        self.ask_agent = None;
     }
 
     pub fn snapshot(&self) -> ChangesSnapshot {
@@ -82,11 +95,10 @@ impl ChangesTab {
             self.file_views.remove(path);
         }
 
-        // Merge updated files and notify any existing row views that their
-        // status changed so they invalidate cached diffs.
         for (path, file) in result.updated_files {
             if self.suppressed.contains(&path) { continue; }
             if let Some(existing) = self.changed_files.iter_mut().find(|f| f.path == path) {
+                // Already confirmed. Only status changes need a view refresh.
                 let status_changed = existing.status != file.status;
                 *existing = file.clone();
                 if status_changed {
@@ -96,7 +108,33 @@ impl ChangesTab {
                         });
                     }
                 }
+            } else if file.status == FileStatus::Modified {
+                // New candidate -- confirm it has real content differences
+                // before making it visible. This prevents flicker for files
+                // that are identical on both sides (e.g. post-Keep).
+                // Only applies to Modified: for Added/Deleted, existence
+                // itself is the change even with empty content.
+                let Some(svc) = self.service.clone() else { continue };
+                let path_clone = path.clone();
+                let handle = svc.spawn_result(move |s| async move {
+                    s.compute_stats(&path_clone).await
+                });
+                cx.spawn(async move |this, cx| {
+                    let Ok((stats, is_binary)) = handle.await else { return };
+                    let empty = !is_binary && stats.additions == 0 && stats.deletions == 0;
+                    if empty { return; }
+                    let _ = cx.update(|cx| {
+                        this.update(cx, |panel, cx| {
+                            let tab = &mut panel.changes_tab;
+                            if tab.suppressed.contains(&file.path) { return; }
+                            if tab.changed_files.iter().any(|f| f.path == file.path) { return; }
+                            tab.changed_files.push(file);
+                            cx.notify();
+                        }).ok();
+                    });
+                }).detach();
             } else {
+                // Added or Deleted: existence is the change, show immediately.
                 self.changed_files.push(file);
             }
         }
@@ -278,12 +316,13 @@ impl ChangesTab {
 
         // Context menu: find any row with an open context menu (only one shows
         // at a time) and render it anchored at its requested position.
-        for view in self.file_views.values() {
+        for (file_path, view) in &self.file_views {
             let row = view.read(cx);
             let sel = row.selection().get();
             if let Some(pos) = sel.context_menu {
                 let sel_state = row.selection().clone();
                 let lines = row.display_lines().cloned();
+                let has_ask_agent = self.on_ask_agent.is_some();
 
                 content = content
                     .child(deferred(
@@ -293,7 +332,7 @@ impl ChangesTab {
                             .snap_to_window()
                             .child(
                                 t::popover()
-                                    .w(px(120.0))
+                                    .w(px(140.0))
                                     .child(
                                         t::menu_item()
                                             .id("diff-ctx-copy")
@@ -320,7 +359,64 @@ impl ChangesTab {
                                                     .text_color(t::text_ghost())
                                                     .child("\u{2318}C"),
                                             ),
-                                    ),
+                                    )
+                                    .when(has_ask_agent, |el| {
+                                        let sel_state = sel_state.clone();
+                                        let lines = lines.clone();
+                                        let file_path = file_path.clone();
+                                        let panel = cx.weak_entity();
+                                        el.child(
+                                            t::menu_item()
+                                                .id("diff-ctx-ask-agent")
+                                                .hover(|s| s.bg(t::bg_hover()))
+                                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                                    let selected_text = {
+                                                        let s = sel_state.get();
+                                                        lines.as_ref()
+                                                            .map(|l| diff_view::extract_selection_text(&s, l))
+                                                            .unwrap_or_default()
+                                                    };
+                                                    // Close context menu
+                                                    let mut s = sel_state.get();
+                                                    s.context_menu = None;
+                                                    sel_state.set(s);
+                                                    // Open ask-agent input popover
+                                                    if let Some(panel) = panel.upgrade() {
+                                                        panel.update(cx, |panel, cx| {
+                                                            let on_ask = panel.changes_tab.on_ask_agent.clone();
+                                                            let fp = file_path.clone();
+                                                            let st = selected_text.clone();
+                                                            let input = cx.new(|cx| {
+                                                                let mut ti = TextInput::new(cx);
+                                                                ti.set_placeholder("Type instruction...");
+                                                                ti
+                                                            });
+                                                            let sub = cx.subscribe(&input, move |this, _input, event: &TextInputEvent, cx| {
+                                                                if let TextInputEvent::Submit(instruction) = event {
+                                                                    let msg = format!(
+                                                                        "In `{}`:\n\n```\n{}\n```\n\n{}\n",
+                                                                        fp, st, instruction
+                                                                    );
+                                                                    if let Some(ref cb) = on_ask {
+                                                                        cb(msg, cx);
+                                                                    }
+                                                                    this.changes_tab.ask_agent = None;
+                                                                    cx.notify();
+                                                                }
+                                                            });
+                                                            panel.changes_tab.ask_agent = Some(AskAgentState {
+                                                                position: pos,
+                                                                input,
+                                                                _subscription: sub,
+                                                            });
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                    cx.stop_propagation();
+                                                })
+                                                .child("Ask Agent"),
+                                        )
+                                    }),
                             ),
                     ).with_priority(1))
                     .child(deferred(
@@ -345,6 +441,75 @@ impl ChangesTab {
 
                 break; // only one context menu at a time
             }
+        }
+
+        // Ask-agent input popover
+        if let Some(ref state) = self.ask_agent {
+            let input = state.input.clone();
+            let panel = cx.weak_entity();
+
+            content = content
+                .child(deferred(
+                    anchored()
+                        .position(state.position)
+                        .anchor(Corner::TopLeft)
+                        .snap_to_window()
+                        .child(
+                            t::popover()
+                                .id("ask-agent-popover")
+                                .w(px(260.0))
+                                .p_2()
+                                .flex()
+                                .flex_col()
+                                .gap_1p5()
+                                .occlude()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .child(
+                                    div().text_xs().font_weight(FontWeight::MEDIUM)
+                                        .text_color(t::text_secondary())
+                                        .child("Ask agent about selection"),
+                                )
+                                .child(input)
+                                .on_key_down({
+                                    let panel = panel.clone();
+                                    move |event, _window, cx| {
+                                        if event.keystroke.key.as_str() == "escape" {
+                                            if let Some(panel) = panel.upgrade() {
+                                                panel.update(cx, |panel, cx| {
+                                                    panel.changes_tab.ask_agent = None;
+                                                    cx.notify();
+                                                });
+                                            }
+                                            cx.stop_propagation();
+                                        }
+                                    }
+                                }),
+                        ),
+                ).with_priority(2))
+                .child(deferred(
+                    div()
+                        .id("ask-agent-backdrop")
+                        .absolute()
+                        .top(px(-2000.0))
+                        .left(px(-2000.0))
+                        .w(px(8000.0))
+                        .h(px(8000.0))
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, {
+                            let panel = panel.clone();
+                            move |_, _, cx| {
+                                if let Some(panel) = panel.upgrade() {
+                                    panel.update(cx, |panel, cx| {
+                                        panel.changes_tab.ask_agent = None;
+                                        cx.notify();
+                                    });
+                                }
+                                cx.stop_propagation();
+                            }
+                        }),
+                ).with_priority(1));
         }
 
         content.into_any_element()
