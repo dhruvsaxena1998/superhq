@@ -40,13 +40,7 @@ pub async fn run_auth_setup(
     // Build profile.d for interactive shell env vars
     let mut profile_lines = String::new();
 
-    // Proxy CA cert (only if MITM is active)
-    if let Ok(r) = sandbox.exec_in("sh", "test -f /usr/local/share/ca-certificates/shuru-proxy.crt && echo yes").await {
-        if r.stdout.trim() == "yes" {
-            write_export(&mut profile_lines, "NODE_EXTRA_CA_CERTS", "/usr/local/share/ca-certificates/shuru-proxy.crt");
-            write_export(&mut profile_lines, "SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt");
-        }
-    }
+    write_export(&mut profile_lines, "SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt");
 
     // Gateway env vars (skip internal _GATEWAY_* keys used only by auth_setup)
     for (k, v) in gateway_env {

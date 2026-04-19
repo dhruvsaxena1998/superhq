@@ -124,10 +124,6 @@ pub fn build_agent_env(gateway_env: &HashMap<String, String>) -> HashMap<String,
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     env.insert(
-        "NODE_EXTRA_CA_CERTS".into(),
-        "/usr/local/share/ca-certificates/shuru-proxy.crt".into(),
-    );
-    env.insert(
         "SSL_CERT_FILE".into(),
         "/etc/ssl/certs/ca-certificates.crt".into(),
     );
