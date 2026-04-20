@@ -1,0 +1,72 @@
+name: Deploy Remote Web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/superhq-remote-client/**"
+      - "crates/superhq-remote-proto/**"
+      - ".github/workflows/deploy-remote-web.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: "deploy-remote-web"
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/superhq-remote-client/web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: "pnpm"
+          cache-dependency-path: crates/superhq-remote-client/web/pnpm-lock.yaml
+
+      - name: Setup Rust (wasm32 target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/superhq-remote-client -> target
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
+      - name: Build WASM bundle
+        working-directory: crates/superhq-remote-client
+        run: bash demo/build.sh
+
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web
+        run: pnpm build
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: crates/superhq-remote-client/web
+          command: deploy
