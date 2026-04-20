@@ -7,6 +7,7 @@ import {
     watchNotifications,
 } from "./lib/session";
 import Toast from "./components/Toast";
+import PWAUpdatePrompt from "./components/PWAUpdatePrompt";
 import PairRoute from "./routes/pair";
 import HomeRoute from "./routes/home";
 import WorkspaceRoute from "./routes/workspace";
@@ -124,6 +125,7 @@ export default function App() {
             <NotificationSubscriber />
             <TerminalRegistryManager />
             <Toast />
+            <PWAUpdatePrompt />
             <Routes>
                 <Route path="/pair" element={<PairRoute />} />
                 <Route
