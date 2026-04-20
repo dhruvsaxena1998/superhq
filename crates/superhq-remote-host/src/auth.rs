@@ -12,8 +12,12 @@ type HmacSha256 = Hmac<Sha256>;
 
 const DOMAIN: &str = "superhq:v1:";
 
-/// ±5-minute timestamp window; tuned to tolerate normal clock drift.
-pub const MAX_SKEW_SECS: u64 = 300;
+/// ±15-minute timestamp window. Phones in particular drift several
+/// minutes off NTP routinely; 5 minutes was tight enough to reject
+/// real pair attempts from devices the user had just picked up.
+/// The per-device monotonic-timestamp replay guard on the handler
+/// side means this window is not a replay surface.
+pub const MAX_SKEW_SECS: u64 = 900;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
