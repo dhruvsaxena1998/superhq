@@ -468,7 +468,12 @@ function KeyBar({
             className="glass-chrome relative z-10"
             style={{
                 paddingTop: "8px",
-                paddingBottom: "8px",
+                // Extend the bar background into the home-indicator
+                // safe area so there's no visible app-base strip
+                // between the KeyBar and the device edge on
+                // standalone PWAs. The home indicator renders on
+                // top of the glass-chrome bg instead.
+                paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)",
             }}
         >
             <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3">

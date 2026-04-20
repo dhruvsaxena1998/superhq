@@ -107,7 +107,7 @@ export default function HomeRoute() {
                 <EmptyView />
             ) : (
                 <PullToRefresh
-                    className="px-4 pb-8"
+                    className="px-4 pb-[calc(env(safe-area-inset-bottom)+32px)]"
                     onRefresh={refreshNow}
                     disabled={refreshing}
                 >

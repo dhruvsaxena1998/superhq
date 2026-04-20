@@ -44,14 +44,18 @@ function useKeyboardInset(ref: React.RefObject<HTMLElement | null>) {
 export default function Screen({ children, className = "" }: Props) {
     const rootRef = useRef<HTMLDivElement | null>(null);
     useKeyboardInset(rootRef);
+    // No safe-area-inset-bottom reserve here — routes that have a
+    // bottom-anchored chrome (the workspace KeyBar) extend their own
+    // background into the safe area and apply the inset as inner
+    // padding so the home indicator sits on glass instead of bare
+    // app-base. Routes without bottom chrome add their own padding.
     return (
         <div
             ref={rootRef}
             className={`h-full w-full flex flex-col bg-app-base text-app-text ${className}`}
             style={{
                 paddingTop: "env(safe-area-inset-top)",
-                paddingBottom:
-                    "max(env(safe-area-inset-bottom), var(--keyboard-inset, 0px))",
+                paddingBottom: "var(--keyboard-inset, 0px)",
             }}
         >
             {children}
