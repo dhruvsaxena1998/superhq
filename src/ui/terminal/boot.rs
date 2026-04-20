@@ -8,7 +8,7 @@ use super::session::{AgentStatus, TabKind, TerminalTab};
 use crate::agents;
 use crate::sandbox::agent_setup;
 use crate::sandbox::auth_gateway::{AuthGateway, AuthGatewayConfig};
-use crate::sandbox::pty_adapter::{ShuruPtyReader, ShuruPtyResizer, ShuruPtyWriter};
+use crate::sandbox::pty_adapter::{ShuruPtyReader, ShuruPtyWriter};
 use crate::sandbox::secrets;
 
 impl super::TerminalPanel {
@@ -484,11 +484,24 @@ impl super::TerminalPanel {
             let (writer, reader) = shell.split();
             let pty_writer = ShuruPtyWriter::new(writer.clone());
             let pty_reader = ShuruPtyReader::new(reader, tokio_handle.clone());
-            let resizer = ShuruPtyResizer::new(writer.clone());
+            let pty_output_tap = pty_reader.tap();
+            let pty_scrollback = pty_reader.scrollback();
+            let pty_bus_writer = writer.clone();
+
+            // Build the PtyBus up front so the local resize callback can
+            // route through it — otherwise `PtyBus.dimensions` drifts
+            // from the real PTY size and remote `pty.attach` responses
+            // report stale geometry.
+            let pty_bus = crate::ui::remote::PtyBus::new(
+                pty_bus_writer,
+                pty_output_tap,
+                pty_scrollback,
+            );
+            let bus_for_resize = pty_bus.clone();
 
             let terminal_config = Self::make_terminal_config();
             let resize_callback = move |cols: usize, rows: usize| {
-                resizer.resize(cols as u16, rows as u16);
+                bus_for_resize.resize(cols as u16, rows as u16);
             };
 
             cx.update(|cx| {
@@ -530,6 +543,12 @@ impl super::TerminalPanel {
                                 }
                             }
                         });
+                    }
+
+                    // Register this PTY on the shared bus map so the
+                    // remote-control handler can attach to it.
+                    if let Ok(mut map) = panel.pty_map.write() {
+                        map.insert((ws_id, tab_id), pty_bus);
                     }
 
                     // Bridge agent status updates to GPUI
@@ -624,15 +643,15 @@ impl super::TerminalPanel {
         &mut self,
         parent_agent_tab_id: u64,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<u64> {
         let ws_id = match self.active_workspace_id {
             Some(id) => id,
-            None => return,
+            None => return None,
         };
 
         let session = match self.sessions.get(&ws_id) {
             Some(s) => s,
-            None => return,
+            None => return None,
         };
 
         // Find the parent agent tab — must have a ready sandbox
@@ -641,9 +660,9 @@ impl super::TerminalPanel {
             match s.tabs.iter().find(|t| t.tab_id == parent_agent_tab_id) {
                 Some(tab) => match &tab.kind {
                     TabKind::Agent { sandbox: Some(sandbox), .. } => (sandbox.clone(), tab.label.clone()),
-                    _ => return, // Still setting up or not an agent
+                    _ => return None, // Still setting up or not an agent
                 },
-                None => return,
+                None => return None,
             }
         };
 
@@ -683,11 +702,20 @@ impl super::TerminalPanel {
             let (writer, reader) = shell.split();
             let pty_writer = ShuruPtyWriter::new(writer.clone());
             let pty_reader = ShuruPtyReader::new(reader, tokio_handle.clone());
-            let resizer = ShuruPtyResizer::new(writer.clone());
+            let pty_output_tap = pty_reader.tap();
+            let pty_scrollback = pty_reader.scrollback();
+            let pty_bus_writer = writer.clone();
+
+            let pty_bus = crate::ui::remote::PtyBus::new(
+                pty_bus_writer,
+                pty_output_tap,
+                pty_scrollback,
+            );
+            let bus_for_resize = pty_bus.clone();
 
             let terminal_config = Self::make_terminal_config();
             let resize_callback = move |cols: usize, rows: usize| {
-                resizer.resize(cols as u16, rows as u16);
+                bus_for_resize.resize(cols as u16, rows as u16);
             };
 
             cx.update(|cx| {
@@ -733,6 +761,9 @@ impl super::TerminalPanel {
                             s.tab_scroll.scroll_to_item(s.tabs.len() - 1);
                         });
                     }
+                    if let Ok(mut map) = panel.pty_map.write() {
+                        map.insert((ws_id, tab_id), pty_bus);
+                    }
                     // Auto-focus the new shell terminal
                     let fh = terminal.read(cx).focus_handle().clone();
                     cx.defer(move |cx| {
@@ -749,13 +780,14 @@ impl super::TerminalPanel {
             .ok();
         })
         .detach();
+        Some(tab_id)
     }
 
     /// Open a host shell tab (local PTY, not sandboxed).
-    pub fn open_host_shell_tab(&mut self, cx: &mut Context<Self>) {
+    pub fn open_host_shell_tab(&mut self, cx: &mut Context<Self>) -> Option<u64> {
         let ws_id = match self.active_workspace_id {
             Some(id) => id,
-            None => return,
+            None => return None,
         };
 
         let tab_id = self.next_tab_id;
@@ -773,7 +805,7 @@ impl super::TerminalPanel {
             Ok(pair) => pair,
             Err(e) => {
                 eprintln!("Failed to open PTY: {e}");
-                return;
+                return None;
             }
         };
 
@@ -794,31 +826,63 @@ impl super::TerminalPanel {
 
         if let Err(e) = pair.slave.spawn_command(cmd) {
             eprintln!("Failed to spawn shell: {e}");
-            return;
+            return None;
         }
 
-        let writer = match pair.master.take_writer() {
+        let raw_writer = match pair.master.take_writer() {
             Ok(w) => w,
-            Err(e) => { eprintln!("Failed to get PTY writer: {e}"); return; }
+            Err(e) => { eprintln!("Failed to get PTY writer: {e}"); return None; }
         };
-        let reader = match pair.master.try_clone_reader() {
+        let raw_reader = match pair.master.try_clone_reader() {
             Ok(r) => r,
-            Err(e) => { eprintln!("Failed to get PTY reader: {e}"); return; }
+            Err(e) => { eprintln!("Failed to get PTY reader: {e}"); return None; }
         };
 
         let pty_master = std::sync::Arc::new(parking_lot::Mutex::new(pair.master));
         drop(pair.slave);
 
+        // Remote-control plumbing: the reader is wrapped so every byte
+        // destined for the local xterm also lands in a broadcast
+        // channel + scrollback ring. Remote subscribers read from those.
+        // The writer is shared so remote keystrokes end up on the same
+        // PTY as local ones.
+        let (tap_tx, _tap_rx) = tokio::sync::broadcast::channel::<bytes::Bytes>(1024);
+        let scrollback = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::sandbox::pty_adapter::ScrollbackRing::new(256 * 1024),
+        ));
+        let shared_writer = std::sync::Arc::new(
+            parking_lot::Mutex::new(raw_writer),
+        );
+        let reader: Box<dyn std::io::Read + Send> = Box::new(HostShellTappedReader {
+            inner: raw_reader,
+            tap: tap_tx.clone(),
+            scrollback: scrollback.clone(),
+        });
+        let writer: Box<dyn std::io::Write + Send> = Box::new(HostShellSharedWriter(
+            shared_writer.clone(),
+        ));
+
         let terminal_config = Self::make_terminal_config();
-        let pty_for_resize = pty_master.clone();
+
+        // Register the PtyBus so remote clients can attach. Host shell
+        // uses a custom `PtyInput` impl since it isn't backed by a
+        // shuru-sdk `ShellWriter`. Route local resize through the bus
+        // too so `current_dimensions()` stays accurate.
+        let host_pty_bus = crate::ui::remote::PtyBus::new(
+            HostShellPtyInput {
+                writer: shared_writer.clone(),
+                master: pty_master.clone(),
+            },
+            tap_tx.clone(),
+            scrollback.clone(),
+        );
+        let bus_for_resize = host_pty_bus.clone();
         let resize_callback = move |cols: usize, rows: usize| {
-            let _ = pty_for_resize.lock().resize(portable_pty::PtySize {
-                cols: cols as u16,
-                rows: rows as u16,
-                pixel_width: 0,
-                pixel_height: 0,
-            });
+            bus_for_resize.resize(cols as u16, rows as u16);
         };
+        if let Ok(mut map) = self.pty_map.write() {
+            map.insert((ws_id, tab_id), host_pty_bus);
+        }
 
         if let Some(session) = self.sessions.get(&ws_id) {
             let dyn_title: std::rc::Rc<std::cell::RefCell<Option<SharedString>>> =
@@ -858,6 +922,77 @@ impl super::TerminalPanel {
             self.notify_side_panel(ws_id, cx);
             cx.notify();
         }
+        Some(tab_id)
     }
 
+}
+
+/// Reader wrapper for host-shell PTYs. Every successful read is mirrored
+/// into a broadcast channel + scrollback ring so remote clients can
+/// attach and receive the same bytes the local xterm is drawing. The
+/// scrollback push + broadcast send happen under the same lock so an
+/// attach handler can snapshot + subscribe atomically — matching the
+/// agent PTY bridge in `sandbox::pty_adapter`.
+struct HostShellTappedReader {
+    inner: Box<dyn std::io::Read + Send>,
+    tap: tokio::sync::broadcast::Sender<bytes::Bytes>,
+    scrollback:
+        std::sync::Arc<std::sync::Mutex<crate::sandbox::pty_adapter::ScrollbackRing>>,
+}
+
+impl std::io::Read for HostShellTappedReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if n > 0 {
+            let bytes = bytes::Bytes::copy_from_slice(&buf[..n]);
+            if let Ok(mut sb) = self.scrollback.lock() {
+                sb.push(&buf[..n]);
+                let _ = self.tap.send(bytes);
+            }
+        }
+        Ok(n)
+    }
+}
+
+/// Writer wrapper that lets the local `TerminalView` and a remote
+/// input stream share the same underlying portable-pty writer. A
+/// `parking_lot::Mutex` serialises the two sources of writes.
+struct HostShellSharedWriter(std::sync::Arc<parking_lot::Mutex<Box<dyn std::io::Write + Send>>>);
+
+impl std::io::Write for HostShellSharedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().flush()
+    }
+}
+
+/// `PtyInput` impl backed by a host-shell portable-pty. Input goes
+/// through the shared writer (same as the local xterm uses); resize
+/// drives the master directly.
+struct HostShellPtyInput {
+    writer: std::sync::Arc<parking_lot::Mutex<Box<dyn std::io::Write + Send>>>,
+    master: std::sync::Arc<parking_lot::Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+}
+
+impl crate::ui::remote::pty_bus::PtyInput for HostShellPtyInput {
+    fn send_input(&self, data: &[u8]) -> Result<(), String> {
+        use std::io::Write;
+        let mut w = self.writer.lock();
+        w.write_all(data).map_err(|e| e.to_string())?;
+        w.flush().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    fn resize(&self, rows: u16, cols: u16) -> Result<(), String> {
+        self.master
+            .lock()
+            .resize(portable_pty::PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| e.to_string())
+    }
 }

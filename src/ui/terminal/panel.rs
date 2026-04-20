@@ -40,6 +40,9 @@ pub struct TerminalPanel {
     pub(super) side_panel: Option<Entity<SidePanel>>,
     pub show_tab_badges: bool,
     pub(super) last_theme_gen: u64,
+    /// Shared map of PTY buses (workspace_id, tab_id) → PtyBus. Written
+    /// to on tab boot, read from by the remote-control handler.
+    pub(super) pty_map: crate::ui::remote::PtyMap,
 }
 
 impl TerminalPanel {
@@ -77,7 +80,13 @@ impl TerminalPanel {
             side_panel: None,
             show_tab_badges: false,
             last_theme_gen: crate::ui::theme::theme_generation(),
+            pty_map: crate::ui::remote::new_pty_map(),
         }
+    }
+
+    /// Shared PTY bus map — used by the remote-control feature.
+    pub fn pty_map(&self) -> &crate::ui::remote::PtyMap {
+        &self.pty_map
     }
 
     /// Push the current theme's colors into every open terminal. Called from

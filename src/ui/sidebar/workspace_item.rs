@@ -301,7 +301,7 @@ impl Render for WorkspaceItemView {
                 }
                 let ws = workspace.clone();
                 terminal_panel.update(cx, |panel, cx| {
-                    panel.activate_workspace(&ws, window, cx);
+                    panel.activate_workspace(&ws, Some(window), cx);
                 });
                 // Show the side panel — use show_waiting to set visibility/git state,
                 // then immediately try to connect a sandbox.

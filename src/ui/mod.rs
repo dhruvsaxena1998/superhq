@@ -4,6 +4,7 @@ pub mod dialogs;
 #[allow(dead_code)]
 pub mod dock;
 
+pub mod remote;
 pub mod review;
 pub mod settings;
 pub mod setup;

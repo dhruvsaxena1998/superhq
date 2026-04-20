@@ -7,6 +7,13 @@ license = "AGPL-3.0-only"
 [dependencies]
 gpui = "0.2"
 gpui-terminal = { path = "crates/gpui-terminal" }
+superhq-remote-host = { path = "crates/superhq-remote-host" }
+superhq-remote-proto = { path = "crates/superhq-remote-proto" }
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+bytes = "1"
+qrcode = { version = "0.14", default-features = false }
 
 # Tree-sitter for syntax highlighting
 tree-sitter = "0.25"

@@ -58,6 +58,18 @@ impl super::TerminalPanel {
         self.on_open_settings = Some(Arc::new(cb));
     }
 
+    /// Shared tokio handle — used by sub-features that need to drive
+    /// their own async work (e.g. remote control server).
+    pub fn tokio_handle(&self) -> &tokio::runtime::Handle {
+        &self.tokio_handle
+    }
+
+    /// Read-only view of the workspace session map — used by the remote
+    /// access feature to snapshot workspaces + tabs.
+    pub fn sessions(&self) -> &std::collections::HashMap<i64, Entity<super::session::WorkspaceSession>> {
+        &self.sessions
+    }
+
     pub fn set_on_open_port_dialog(&mut self, cb: impl Fn(i64, Option<Arc<AsyncSandbox>>, tokio::runtime::Handle, &mut Window, &mut App) + 'static) {
         self.on_open_port_dialog = Some(Arc::new(cb));
     }
@@ -167,7 +179,7 @@ impl super::TerminalPanel {
     pub fn activate_workspace(
         &mut self,
         workspace: &Workspace,
-        window: &mut Window,
+        window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) {
         // Only clear the missing secrets prompt if switching to a different workspace
@@ -176,10 +188,14 @@ impl super::TerminalPanel {
         }
 
         if let Some(session) = self.sessions.get(&workspace.id) {
-            let s = session.read(cx);
-            if let Some(tab) = s.tabs.get(s.active_tab) {
-                if let Some(ref terminal) = tab.terminal {
-                    terminal.read(cx).focus_handle().focus(window);
+            // Only move focus when a real desktop Window is driving
+            // the activation; remote-originated calls leave focus alone.
+            if let Some(window) = window {
+                let s = session.read(cx);
+                if let Some(tab) = s.tabs.get(s.active_tab) {
+                    if let Some(ref terminal) = tab.terminal {
+                        terminal.read(cx).focus_handle().focus(window);
+                    }
                 }
             }
             self.active_workspace_id = Some(workspace.id);
@@ -255,6 +271,10 @@ impl super::TerminalPanel {
 
     /// Open a new agent tab — appears immediately with setup progress,
     /// then boots its own sandbox in the background.
+    ///
+    /// Returns the freshly-assigned `tab_id` so remote callers can find
+    /// the tab in a subsequent snapshot. Returns `None` when no
+    /// workspace is active (caller error).
     pub fn open_agent_tab(
         &mut self,
         agent_id: i64,
@@ -265,10 +285,10 @@ impl super::TerminalPanel {
         checkpoint_from: Option<String>,
         initial_prompt: Option<String>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<u64> {
         let ws_id = match self.active_workspace_id {
             Some(id) => id,
-            None => return,
+            None => return None,
         };
 
         let agent_info = self.agents.iter().find(|a| a.id == agent_id);
@@ -382,10 +402,11 @@ impl super::TerminalPanel {
                     });
                 }
                 cx.notify();
-                return;
+                return Some(tab_id);
             }
         }
 
         self.boot_agent_tab(ws_id, tab_id, agent_id, agent_command, checkpoint_from, cx);
+        Some(tab_id)
     }
 }

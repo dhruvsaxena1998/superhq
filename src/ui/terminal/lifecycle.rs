@@ -26,6 +26,27 @@ impl super::TerminalPanel {
 
     pub fn force_close_tab(&mut self, ws_id: i64, tab_id: u64, cx: &mut Context<Self>) {
         self.pending_close = None;
+        // If this is an agent tab, `WorkspaceSession::remove_tab` will
+        // cascade-delete every guest shell whose `parent_agent_tab_id`
+        // matches. Collect those ids first so we can drop their PtyBus
+        // entries too — otherwise a remote client that already knows a
+        // child tab id can still `pty.attach` to a ghost.
+        let mut to_unregister: Vec<(i64, u64)> = vec![(ws_id, tab_id)];
+        if let Some(session) = self.sessions.get(&ws_id) {
+            let s = session.read(cx);
+            for t in &s.tabs {
+                if let TabKind::Shell { parent_agent_tab_id, .. } = &t.kind {
+                    if *parent_agent_tab_id == tab_id {
+                        to_unregister.push((ws_id, t.tab_id));
+                    }
+                }
+            }
+        }
+        if let Ok(mut map) = self.pty_map.write() {
+            for key in &to_unregister {
+                map.remove(key);
+            }
+        }
         if let Some(session) = self.sessions.get(&ws_id) {
             session.update(cx, |s, cx| {
                 s.remove_tab(tab_id, cx);
@@ -102,6 +123,28 @@ impl super::TerminalPanel {
                     let db_id = db.save_checkpointed_tab(
                         ws_id, &label, agent_id, &cp_name,
                     ).ok();
+
+                    // Collect child shell ids before the retain() drops
+                    // them — their PtyBus entries need to go with them.
+                    let child_ids: Vec<u64> = panel.sessions.get(&ws_id)
+                        .map(|session| {
+                            session.read(cx).tabs.iter()
+                                .filter_map(|t| match &t.kind {
+                                    TabKind::Shell { parent_agent_tab_id, .. }
+                                        if *parent_agent_tab_id == tab_id => Some(t.tab_id),
+                                    _ => None,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if let Ok(mut map) = panel.pty_map.write() {
+                        // Parent agent PTY is gone (sandbox torn down) and
+                        // every child shell's PTY is about to follow.
+                        map.remove(&(ws_id, tab_id));
+                        for child in &child_ids {
+                            map.remove(&(ws_id, *child));
+                        }
+                    }
 
                     if let Some(session) = panel.sessions.get(&ws_id) {
                         session.update(cx, |s, _cx| {

@@ -347,7 +347,7 @@ impl Database {
                     terminal_font_size, sidebar_width, review_panel_width,
                     confirm_on_quit, default_agent_id,
                     sandbox_cpus, sandbox_memory_mb, sandbox_disk_mb, allowed_hosts,
-                    auto_launch_agent
+                    auto_launch_agent, remote_control_enabled
              FROM settings WHERE id = 1",
             [],
             |row| {
@@ -367,10 +367,20 @@ impl Database {
                     sandbox_disk_mb: row.get(11)?,
                     allowed_hosts: allowed_hosts_str
                         .and_then(|s| serde_json::from_str(&s).ok()),
+                    remote_control_enabled: row.get::<_, bool>(14).unwrap_or(true),
                 })
             },
         )
         .map_err(Into::into)
+    }
+
+    pub fn update_remote_control_enabled(&self, enabled: bool) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE settings SET remote_control_enabled = ?1 WHERE id = 1",
+            rusqlite::params![enabled],
+        )?;
+        Ok(())
     }
 
     pub fn update_sandbox_settings(&self, cpus: i32, memory_mb: i64, disk_mb: i64) -> Result<()> {
@@ -651,4 +661,139 @@ impl Database {
             .ok()
             .flatten())
     }
+
+    // ── Remote endpoint identity (iroh SecretKey persistence) ──────
+
+    /// Load the saved remote-control endpoint secret key (32 bytes),
+    /// or `None` when the host has never started the server. Decryption
+    /// errors surface as `Err` — a corrupted row is not a missing row.
+    pub fn get_remote_endpoint_secret(&self) -> Result<Option<[u8; 32]>> {
+        let conn = self.conn.lock().unwrap();
+        let blob: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT encrypted_secret FROM remote_endpoint_identity WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        let Some(blob) = blob else { return Ok(None) };
+        let bytes = super::crypto::decrypt(&blob, &self.encryption_key)?;
+        if bytes.len() != 32 {
+            return Err(anyhow::anyhow!(
+                "remote endpoint secret: expected 32 bytes, got {}",
+                bytes.len()
+            ));
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        Ok(Some(arr))
+    }
+
+    /// Persist the endpoint secret key. Idempotent — overwrites any
+    /// previous row so a user can force-rotate by clearing the table.
+    pub fn save_remote_endpoint_secret(&self, bytes: &[u8; 32]) -> Result<()> {
+        let encrypted = super::crypto::encrypt(bytes, &self.encryption_key)?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO remote_endpoint_identity (id, encrypted_secret)
+             VALUES (1, ?1)",
+            rusqlite::params![encrypted],
+        )?;
+        Ok(())
+    }
+
+    /// Clear the persisted endpoint secret. Used by the "rotate host id"
+    /// flow: next `load_or_generate_secret` call will create a fresh one.
+    pub fn delete_remote_endpoint_secret(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM remote_endpoint_identity", [])?;
+        Ok(())
+    }
+
+    // ── Paired device CRUD (remote control) ──────────────────────────
+
+    /// Insert a new paired device. `device_key` is the raw 32 bytes;
+    /// encrypted at rest.
+    pub fn save_paired_device(
+        &self,
+        device_id: &str,
+        device_label: &str,
+        device_key: &[u8],
+        created_at: u64,
+    ) -> Result<()> {
+        let encrypted = super::crypto::encrypt(device_key, &self.encryption_key)?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO paired_devices
+                (device_id, device_label, encrypted_device_key, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![device_id, device_label, encrypted, created_at as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Look up a paired device's plaintext key. Returns `None` if no such
+    /// device, `Err` on decrypt failure (e.g. wrong key).
+    pub fn get_paired_device_key(&self, device_id: &str) -> Result<Option<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap();
+        let blob: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT encrypted_device_key FROM paired_devices WHERE device_id = ?1",
+                [device_id],
+                |row| row.get(0),
+            )
+            .ok();
+        match blob {
+            Some(b) => Ok(Some(super::crypto::decrypt(&b, &self.encryption_key)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Touch `last_seen_at` on each successful authenticated hello.
+    pub fn touch_paired_device(&self, device_id: &str, now: u64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE paired_devices SET last_seen_at = ?1 WHERE device_id = ?2",
+            rusqlite::params![now as i64, device_id],
+        )?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn remove_paired_device(&self, device_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM paired_devices WHERE device_id = ?1", [device_id])?;
+        Ok(())
+    }
+
+    /// List paired devices (metadata only — keys stay encrypted).
+    pub fn list_paired_devices(&self) -> Result<Vec<PairedDeviceRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT device_id, device_label, created_at, last_seen_at
+             FROM paired_devices ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(PairedDeviceRow {
+                device_id: row.get(0)?,
+                device_label: row.get(1)?,
+                created_at: row.get::<_, i64>(2)? as u64,
+                last_seen_at: row.get::<_, Option<i64>>(3)?.map(|v| v as u64),
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct PairedDeviceRow {
+    pub device_id: String,
+    pub device_label: String,
+    pub created_at: u64,
+    pub last_seen_at: Option<u64>,
 }

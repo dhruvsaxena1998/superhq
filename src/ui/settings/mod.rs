@@ -3,6 +3,7 @@ mod appearance;
 pub mod card;
 mod general;
 mod providers;
+mod remote_control;
 mod sandbox;
 mod shortcuts;
 
@@ -83,6 +84,7 @@ pub enum SettingsTab {
     Appearance,
     Secrets,
     Sandbox,
+    RemoteControl,
     Shortcuts,
     About,
 }
@@ -94,6 +96,7 @@ impl SettingsTab {
             Self::Appearance => "Appearance",
             Self::Secrets => "Providers",
             Self::Sandbox => "Sandbox",
+            Self::RemoteControl => "Remote control",
             Self::Shortcuts => "Shortcuts",
             Self::About => "About",
         }
@@ -105,6 +108,7 @@ impl SettingsTab {
             SettingsTab::Appearance,
             SettingsTab::Secrets,
             SettingsTab::Sandbox,
+            SettingsTab::RemoteControl,
             SettingsTab::Shortcuts,
             SettingsTab::About,
         ]
@@ -150,6 +154,11 @@ pub struct SettingsPanel {
     pub(crate) theme_id: String,
     agent_dropdown: Entity<crate::ui::components::Select>,
     pub(crate) auto_launch_switch: Entity<crate::ui::components::Switch>,
+    pub(crate) remote_control_switch: Entity<crate::ui::components::Switch>,
+    pub(crate) audit_log_path: std::path::PathBuf,
+    pub(crate) host_id: Option<String>,
+    pub(crate) on_rotate_host_id: RotateHostIdCallback,
+    pub(crate) rotate_confirming: bool,
     pub(crate) secret_rows: Vec<SecretRow>,
     pub(crate) sandbox_inputs: SandboxInputs,
     pub(crate) oauth_status: OAuthStatus,
@@ -161,10 +170,26 @@ pub struct SettingsPanel {
     scrollbar_state: ScrollbarState,
 }
 
+/// Callback invoked when the Remote control Switch in the settings panel
+/// is toggled. `AppView` wires this to start/stop the remote server and
+/// persist the setting.
+pub type RemoteControlToggle = std::sync::Arc<dyn Fn(bool, &mut App) + 'static>;
+
+/// Callback invoked when the user confirms rotating the host endpoint
+/// id from the Remote control tab. `AppView` wires this to stop the
+/// server, wipe the persisted secret + all paired devices, restart
+/// the server with a fresh secret, and push a refreshed `host_id` back
+/// into the panel.
+pub type RotateHostIdCallback = std::sync::Arc<dyn Fn(&mut App) + 'static>;
+
 impl SettingsPanel {
     pub fn new(
         db: Arc<Database>,
         toast: Entity<Toast>,
+        on_remote_control_toggled: RemoteControlToggle,
+        on_rotate_host_id: RotateHostIdCallback,
+        audit_log_path: std::path::PathBuf,
+        host_id: Option<String>,
         on_close: impl Fn(&mut Window, &mut App) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -250,6 +275,12 @@ impl SettingsPanel {
         let agent_dropdown = Self::init_agent_dropdown(&all_agents, default_agent_id, cx);
         let auto_launch_value = settings.as_ref().map(|s| s.auto_launch_agent).unwrap_or(true);
         let auto_launch_switch = Self::init_auto_launch_switch(auto_launch_value, cx);
+        let remote_control_value = settings
+            .as_ref()
+            .map(|s| s.remote_control_enabled)
+            .unwrap_or(true);
+        let remote_control_switch =
+            Self::init_remote_control_switch(remote_control_value, on_remote_control_toggled, cx);
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window);
 
@@ -267,6 +298,11 @@ impl SettingsPanel {
             theme_id,
             agent_dropdown,
             auto_launch_switch,
+            remote_control_switch,
+            audit_log_path,
+            host_id,
+            on_rotate_host_id,
+            rotate_confirming: false,
             secret_rows,
             sandbox_inputs,
             toast,
@@ -281,6 +317,11 @@ impl SettingsPanel {
 
     fn close(&self, window: &mut Window, cx: &mut App) {
         (self.on_close)(window, cx);
+    }
+
+    pub fn set_active_tab(&mut self, tab: SettingsTab, cx: &mut Context<Self>) {
+        self.active_tab = tab;
+        cx.notify();
     }
 
     fn render_nav(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -438,6 +479,9 @@ impl Render for SettingsPanel {
                                                 }
                                                 SettingsTab::Sandbox => {
                                                     self.render_sandbox_tab(cx).into_any_element()
+                                                }
+                                                SettingsTab::RemoteControl => {
+                                                    self.render_remote_control_tab(cx).into_any_element()
                                                 }
                                                 SettingsTab::Shortcuts => {
                                                     Self::render_shortcuts_tab().into_any_element()

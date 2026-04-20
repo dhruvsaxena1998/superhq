@@ -92,6 +92,32 @@ impl Database {
             conn.execute("INSERT OR REPLACE INTO _migrations (version) VALUES (3)", [])?;
         }
 
+        if current < 4 {
+            conn.execute_batch(include_str!("../../migrations/004_paired_devices.sql"))?;
+            conn.execute("INSERT OR REPLACE INTO _migrations (version) VALUES (4)", [])?;
+        }
+
+        if current < 5 {
+            conn.execute_batch(include_str!("../../migrations/005_remote_control_enabled.sql"))
+                .ok(); // ignore if column already exists
+            conn.execute("INSERT OR REPLACE INTO _migrations (version) VALUES (5)", [])?;
+        }
+
+        if current < 6 {
+            conn.execute_batch(include_str!(
+                "../../migrations/006_remote_endpoint_identity.sql"
+            ))?;
+            conn.execute("INSERT OR REPLACE INTO _migrations (version) VALUES (6)", [])?;
+        }
+
+        // Belt-and-suspenders: ensure the paired_devices table exists
+        // even if a prior buggy migration recorded version 4 without
+        // actually creating it. Idempotent via IF NOT EXISTS.
+        conn.execute_batch(include_str!("../../migrations/004_paired_devices.sql"))?;
+        conn.execute_batch(include_str!(
+            "../../migrations/006_remote_endpoint_identity.sql"
+        ))?;
+
         Ok(())
     }
 

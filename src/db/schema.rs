@@ -258,6 +258,7 @@ pub struct Settings {
     pub sandbox_memory_mb: i64,
     pub sandbox_disk_mb: i64,
     pub allowed_hosts: Option<Vec<String>>,
+    pub remote_control_enabled: bool,
 }
 
 /// A sandbox snapshot for rewind.

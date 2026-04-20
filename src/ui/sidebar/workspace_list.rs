@@ -111,7 +111,7 @@ impl WorkspaceListView {
             }
             let ws = ws.clone();
             self.terminal_panel.update(cx, |panel, cx| {
-                panel.activate_workspace(&ws, window, cx);
+                panel.activate_workspace(&ws, Some(window), cx);
             });
             let review = self.review_panel.clone();
             review.update(cx, |panel, cx| {
