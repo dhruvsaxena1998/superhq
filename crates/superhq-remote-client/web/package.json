@@ -30,6 +30,6 @@
     "vite": "^6.0.0",
     "vite-plugin-pwa": "^0.21.1",
     "vite-plugin-static-copy": "^2.2.0",
-    "wrangler": "^3.100.0"
+    "wrangler": "^4.84.0"
   }
 }
