@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SuperHQ Remote — Demo</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            max-width: 920px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            background: #1e1e1e;
+            color: #eaeaea;
+        }
+        h1 { font-weight: 500; margin-bottom: 0.25rem; }
+        .subtitle { color: #888; margin-top: 0; font-size: 14px; }
+        input, button, textarea, pre {
+            font-family: ui-monospace, Menlo, monospace;
+            font-size: 14px;
+            padding: 8px;
+            border: 1px solid #444;
+            background: #2a2a2a;
+            color: #eaeaea;
+            border-radius: 4px;
+        }
+        input { width: 100%; box-sizing: border-box; margin-bottom: 8px; }
+        button {
+            cursor: pointer;
+            background: #3a7bd5;
+            border-color: #3a7bd5;
+            margin-right: 8px;
+        }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        button.secondary { background: #2a2a2a; border-color: #555; }
+        .label { color: #888; font-size: 12px; margin-top: 16px; display: block; }
+        .id-box {
+            background: #222;
+            padding: 8px;
+            border-radius: 4px;
+            font-family: ui-monospace, Menlo, monospace;
+            font-size: 12px;
+            word-break: break-all;
+        }
+        .log {
+            background: #111;
+            padding: 12px;
+            border-radius: 4px;
+            font-family: ui-monospace, Menlo, monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 240px;
+            overflow: auto;
+            margin-top: 1rem;
+            line-height: 1.5;
+        }
+        .log .err { color: #f77; }
+        .log .ok { color: #7f7; }
+        .log .info { color: #7cf; }
+        .actions { margin-top: 12px; }
+        .tabs-panel {
+            margin-top: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .tab-card {
+            background: #222;
+            padding: 10px 12px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .tab-title { font-weight: 500; flex-grow: 0; }
+        .tab-meta { color: #888; font-size: 12px; flex-grow: 1; font-family: ui-monospace, Menlo, monospace; }
+        .term-shell {
+            margin-top: 16px;
+            background: #000;
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            display: none;
+        }
+        .term-shell.active { display: block; }
+        .term-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 8px 8px;
+            color: #aaa;
+            font-size: 12px;
+            font-family: ui-monospace, Menlo, monospace;
+        }
+        .term-header button {
+            padding: 4px 10px;
+            font-size: 12px;
+        }
+        #term { height: 420px; }
+    </style>
+</head>
+<body>
+    <h1>SuperHQ Remote — Demo</h1>
+    <p class="subtitle">Browser ↔ desktop via iroh, with a live xterm attached to a real PTY.</p>
+
+    <span class="label">Your browser endpoint id:</span>
+    <div class="id-box" id="myId">loading wasm...</div>
+
+    <span class="label">Server endpoint id (from the desktop SuperHQ stderr):</span>
+    <input id="peer" placeholder="paste the server's EndpointId..." autocomplete="off" />
+
+    <div class="actions">
+        <button id="connectBtn" disabled>Connect</button>
+        <button id="pairBtn" disabled class="secondary">Pair device</button>
+        <button id="forgetBtn" disabled class="secondary">Forget credential</button>
+        <button id="helloBtn" disabled class="secondary">session.hello</button>
+        <button id="workspacesBtn" disabled class="secondary">workspaces.list</button>
+        <button id="tabsBtn" disabled class="secondary">tabs.list</button>
+        <button id="closeBtn" disabled class="secondary">Close</button>
+    </div>
+    <div style="color: #888; font-size: 12px; margin-top: 8px;" id="credBanner"></div>
+
+    <div class="tabs-panel" id="tabsPanel"></div>
+
+    <div class="term-shell" id="termShell">
+        <div class="term-header">
+            <span id="termLabel">— no terminal —</span>
+            <button id="termCloseBtn" class="secondary">Close terminal</button>
+        </div>
+        <div id="term"></div>
+    </div>
+
+    <div class="log" id="log"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+    <script type="module" src="./main.js?v=8"></script>
+</body>
+</html>
