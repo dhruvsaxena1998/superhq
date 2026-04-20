@@ -316,7 +316,7 @@ function HomeHeader({
         <div
             className="flex items-center justify-end gap-1.5 px-3"
             style={{
-                paddingTop: "calc(env(safe-area-inset-top) + 6px)",
+                paddingTop: "6px",
                 paddingBottom: "4px",
             }}
         >

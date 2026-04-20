@@ -146,7 +146,7 @@ export default function WorkspaceRoute() {
                 <div
                     className="flex items-center gap-1.5 px-2"
                     style={{
-                        paddingTop: "calc(env(safe-area-inset-top) + 6px)",
+                        paddingTop: "6px",
                         paddingBottom: "8px",
                     }}
                 >
@@ -285,7 +285,7 @@ function NavTabs({
         <div
             className="relative z-10 flex shrink-0 items-center gap-1.5 px-2"
             style={{
-                paddingTop: "calc(env(safe-area-inset-top) + 6px)",
+                paddingTop: "6px",
                 paddingBottom: "8px",
             }}
         >
@@ -468,7 +468,7 @@ function KeyBar({
             className="glass-chrome relative z-10"
             style={{
                 paddingTop: "8px",
-                paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)",
+                paddingBottom: "8px",
             }}
         >
             <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3">
