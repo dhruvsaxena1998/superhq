@@ -28,6 +28,27 @@ impl SettingsPanel {
         state
     }
 
+    /// Switch bound to the `remote_host_shell_enabled` DB setting.
+    /// Local-only gate; doesn't start/stop any server, so we persist
+    /// directly here instead of bouncing through AppView. The snapshot
+    /// builder reads the column on every render tick so remote clients
+    /// see the change within the next `snapshot.invalidated` push.
+    pub(super) fn init_host_shell_switch(
+        value: bool,
+        db: std::sync::Arc<crate::db::Database>,
+        cx: &mut Context<Self>,
+    ) -> Entity<Switch> {
+        let state = cx.new(|cx| Switch::new(value, cx));
+        cx.subscribe(&state, move |_this, _, event: &SwitchEvent, _cx| {
+            let SwitchEvent::Change(value) = *event;
+            if let Err(e) = db.update_remote_host_shell_enabled(value) {
+                tracing::warn!(error = %e, "failed to persist host-shell toggle");
+            }
+        })
+        .detach();
+        state
+    }
+
     pub(super) fn render_remote_control_tab(
         &self,
         cx: &mut Context<Self>,
@@ -35,12 +56,22 @@ impl SettingsPanel {
         let devices = PairingStore::new(self.db.clone()).list();
         let has_devices = !devices.is_empty();
 
-        let toggle_card = settings_card(vec![settings_row(
-            "Enable remote control",
-            "When off, the host server is stopped and no devices can connect.",
-            self.remote_control_switch.clone(),
-        )
-        .into_any_element()]);
+        let toggle_card = settings_card(vec![
+            settings_row(
+                "Enable remote control",
+                "When off, the host server is stopped and no devices can connect.",
+                self.remote_control_switch.clone(),
+            )
+            .into_any_element(),
+            settings_row(
+                "Allow remote access to host shell",
+                "Host shell runs unsandboxed on this machine. Off by default. \
+                 When off, paired devices can't open a new host shell tab \
+                 or attach to an existing one.",
+                self.host_shell_switch.clone(),
+            )
+            .into_any_element(),
+        ]);
 
         let host_id_block = self.render_host_id_block(cx);
 

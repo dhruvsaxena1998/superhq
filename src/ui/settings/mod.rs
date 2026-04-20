@@ -155,6 +155,7 @@ pub struct SettingsPanel {
     agent_dropdown: Entity<crate::ui::components::Select>,
     pub(crate) auto_launch_switch: Entity<crate::ui::components::Switch>,
     pub(crate) remote_control_switch: Entity<crate::ui::components::Switch>,
+    pub(crate) host_shell_switch: Entity<crate::ui::components::Switch>,
     pub(crate) audit_log_path: std::path::PathBuf,
     pub(crate) host_id: Option<String>,
     pub(crate) on_rotate_host_id: RotateHostIdCallback,
@@ -281,6 +282,15 @@ impl SettingsPanel {
             .unwrap_or(true);
         let remote_control_switch =
             Self::init_remote_control_switch(remote_control_value, on_remote_control_toggled, cx);
+        let host_shell_value = settings
+            .as_ref()
+            .map(|s| s.remote_host_shell_enabled)
+            .unwrap_or(false);
+        let host_shell_switch = Self::init_host_shell_switch(
+            host_shell_value,
+            db.clone(),
+            cx,
+        );
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window);
 
@@ -299,6 +309,7 @@ impl SettingsPanel {
             agent_dropdown,
             auto_launch_switch,
             remote_control_switch,
+            host_shell_switch,
             audit_log_path,
             host_id,
             on_rotate_host_id,

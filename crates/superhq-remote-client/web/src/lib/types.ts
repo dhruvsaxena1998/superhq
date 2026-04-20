@@ -68,6 +68,11 @@ export interface SessionHelloResult {
     workspaces: WorkspaceInfo[];
     tabs: TabInfo[];
     agents: AgentInfo[];
+    /// True when the user has opted in to remote host-shell access
+    /// via Settings > Remote control on the desktop. Off by default;
+    /// when false the client hides the "Host Shell" new-tab option
+    /// and the host will reject any pty.attach / tabs.create for it.
+    allow_host_shell?: boolean;
 }
 
 export type TabCreateSpec =

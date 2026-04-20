@@ -175,6 +175,33 @@ impl AppHandler {
             .and_then(|m| m.get(&(workspace_id, tab_id)).cloned())
     }
 
+    /// Reject remote access to an unsandboxed host-shell tab unless
+    /// the user has opted in via Settings. Non-host-shell tabs pass
+    /// through unchecked.
+    fn check_host_shell_allowed(
+        &self,
+        workspace_id: WorkspaceId,
+        tab_id: TabId,
+    ) -> Result<(), RpcError> {
+        let snap = self.read_state();
+        let is_host_shell = snap.tabs.iter().any(|t| {
+            t.workspace_id == workspace_id
+                && t.tab_id == tab_id
+                && matches!(
+                    t.kind,
+                    superhq_remote_proto::types::TabKind::HostShell
+                )
+        });
+        if is_host_shell && !snap.allow_host_shell {
+            return Err(RpcError::new(
+                error_code::PERMISSION_DENIED,
+                "host-shell access is disabled; enable it in Settings \
+                 > Remote control on the desktop",
+            ));
+        }
+        Ok(())
+    }
+
     /// Verify the client's session.hello proof against the nonce the
     /// transport layer handed us for this connection. Returns Ok when
     /// the proof validates; RpcError otherwise.
@@ -251,6 +278,7 @@ impl RemoteHandler for AppHandler {
             workspaces: snap.workspaces,
             tabs: snap.tabs,
             agents: self.read_agents(),
+            allow_host_shell: snap.allow_host_shell,
         })
     }
 
@@ -318,6 +346,7 @@ impl RemoteHandler for AppHandler {
         params: PtyAttachParams,
         device_id: Option<String>,
     ) -> Result<PtyAttachResult, RpcError> {
+        self.check_host_shell_allowed(params.workspace_id, params.tab_id)?;
         let Some(bus) = self.find_bus(params.workspace_id, params.tab_id) else {
             return Err(RpcError::new(
                 error_code::NOT_FOUND,
@@ -390,6 +419,7 @@ impl RemoteHandler for AppHandler {
         mut send: SendStream,
         mut recv: RecvStream,
     ) -> Result<(), RpcError> {
+        self.check_host_shell_allowed(workspace_id, tab_id)?;
         let Some(bus) = self.find_bus(workspace_id, tab_id) else {
             return Err(RpcError::new(
                 error_code::NOT_FOUND,

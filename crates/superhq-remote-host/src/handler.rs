@@ -196,6 +196,7 @@ impl RemoteHandler for StubHandler {
             workspaces: Vec::new(),
             tabs: Vec::new(),
             agents: Vec::new(),
+            allow_host_shell: false,
         })
     }
 

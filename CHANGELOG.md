@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.1
+
+- Remote host-shell is opt-in. New toggle in Settings > Remote control, off by default. When off, paired devices can't open a new host-shell tab or attach to an existing one; the mobile PWA hides the Host Shell option accordingly.
+- Replaced timestamped HMAC auth on session.hello with a nonce-based challenge-response. The host issues a one-shot nonce via session.challenge; the client HMACs it. No more clock-skew rejections, no replay surface.
+- Multi-client PTY sessions no longer thrash dimensions. The host picks the minimum (cols, rows) across every attached client and sizes the PTY to that; each client letterboxes locally. Fixes the jittery redraws where two viewers made full-screen TUIs (Pi, Claude Code, Codex) paint at the wrong coordinates.
+- Host-side transport hardening: 1 MiB cap on control-stream frames, handshake + stream-init deadlines, per-connection stream cap, frames decoded without logging attacker-controlled bodies.
+- Notifications no longer reach unauthenticated peers; the control-stream subscription is deferred until after session.hello succeeds.
+- Remote control toggle defaults to off on a settings-read failure instead of on. Migration 005 distinguishes duplicate-column from other ALTER failures so a partial migration can't silently look successful.
+- Endpoint rotation blocks on the old server's shutdown and aborts the whole rotate if shutdown fails. pty_map entries are purged when a workspace is removed so stale tab ids can't attach.
+- RPC client has a 60s per-call timeout and drains pending calls on disconnect. A dropped notification receiver no longer terminates the control-stream reader.
+- PWA auto-connects on any authenticated route instead of only the home screen; cold launch into /workspace/:ws works. Disconnects clear the stale client and reconnect automatically.
+- PWA terminal entries self-heal after a PTY failure; the next tab mount reopens cleanly instead of serving a dead handle.
+- Agent SVG icons are sanitized with DOMPurify before rendering.
+- Mobile tab bar: added close button on the active tab, confirm sheet with Checkpoint / Close / Cancel (mirrors the desktop prompt).
+- Setup failures on agent tabs (missing API key, install script errors) surface to remote clients instead of leaving them on the spinner.
+- PWA shows an in-app banner when a new version is installed by the service worker. Tapping Reload activates the waiting worker immediately; otherwise the update applies on the next cold launch.
+- Software-keyboard no longer overlays the bottom action bar in the terminal. Modern browsers (iOS 17.4+, Chrome Android) resize the layout viewport automatically via `interactive-widget=resizes-content`; older browsers get a VisualViewport polyfill.
+- QR scanner rewritten with jsQR. Handles QRs with embedded logos, which the previous decoder couldn't read.
+- Cold launch into a workspace URL connects automatically instead of rendering blank.
+- Minimal Umami analytics. Non-PII events for pair, session, workspace open, tab open/close, PWA update. No host ids, workspace/tab labels, or user content on the wire.
+
 ## 0.4.0
 
 - Remote control: pair a phone or browser with a running host and drive your workspaces from it.

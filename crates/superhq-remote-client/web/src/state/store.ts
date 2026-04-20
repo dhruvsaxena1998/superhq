@@ -39,6 +39,10 @@ interface EphemeralState {
     tabs: TabInfo[];
     agents: AgentInfo[];
     session: SessionStatus;
+    /// Host-shell feature flag surfaced on session.hello. Off by
+    /// default; flipping it requires an explicit Settings toggle on
+    /// the desktop. Drives the "Host Shell" new-tab option visibility.
+    allowHostShell: boolean;
     toast: ToastMessage | null;
 }
 
@@ -51,6 +55,7 @@ interface Actions {
         workspaces: WorkspaceInfo[],
         tabs: TabInfo[],
         agents: AgentInfo[],
+        allowHostShell: boolean,
     ) => void;
     setSessionError: (message: string) => void;
     replaceSnapshot: (workspaces: WorkspaceInfo[], tabs: TabInfo[]) => void;
@@ -72,6 +77,7 @@ export const useConnectionStore = create<Store>()(
             tabs: [],
             agents: [],
             session: { kind: "idle" },
+            allowHostShell: false,
             toast: null,
 
             setPairedHost: (host) => set({ pairedHost: host }),
@@ -91,6 +97,7 @@ export const useConnectionStore = create<Store>()(
                     workspaces: [],
                     tabs: [],
                     agents: [],
+                    allowHostShell: false,
                     session: { kind: "idle" },
                 });
             },
@@ -98,12 +105,13 @@ export const useConnectionStore = create<Store>()(
             setSessionConnecting: () =>
                 set({ session: { kind: "connecting" } }),
 
-            setSessionReady: (client, workspaces, tabs, agents) =>
+            setSessionReady: (client, workspaces, tabs, agents, allowHostShell) =>
                 set({
                     client,
                     workspaces,
                     tabs,
                     agents,
+                    allowHostShell,
                     session: { kind: "ready" },
                 }),
 
@@ -127,6 +135,7 @@ export const useConnectionStore = create<Store>()(
                     workspaces: [],
                     tabs: [],
                     agents: [],
+                    allowHostShell: false,
                     session: { kind: "idle" },
                 });
             },

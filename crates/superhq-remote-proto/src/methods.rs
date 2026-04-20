@@ -92,6 +92,13 @@ pub struct SessionHelloResult {
     /// Agents configured on the host, for the client's new-tab menu.
     #[serde(default)]
     pub agents: Vec<AgentInfo>,
+    /// Host-shell (unsandboxed, runs on the user's machine) is off
+    /// by default. The user opts in via Settings > Remote control.
+    /// Clients honour this by hiding the "Host Shell" new-tab option
+    /// when `false`; the host also enforces it on every `pty.attach`
+    /// / `pty.stream` / `tabs.create` for host-shell kinds.
+    #[serde(default)]
+    pub allow_host_shell: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

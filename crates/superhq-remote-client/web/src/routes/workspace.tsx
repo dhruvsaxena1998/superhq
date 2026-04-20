@@ -33,6 +33,7 @@ export default function WorkspaceRoute() {
     const workspaces = useConnectionStore((s) => s.workspaces);
     const tabs = useConnectionStore((s) => s.tabs);
     const agents = useConnectionStore((s) => s.agents);
+    const allowHostShell = useConnectionStore((s) => s.allowHostShell);
     const client = useConnectionStore((s) => s.client);
     const replaceSnapshot = useConnectionStore((s) => s.replaceSnapshot);
 
@@ -238,6 +239,7 @@ export default function WorkspaceRoute() {
                 open={menuOpen}
                 agents={agents}
                 runningAgentTabs={runningAgentTabs}
+                allowHostShell={allowHostShell}
                 onClose={() => setMenuOpen(false)}
                 onPick={createWithSpec}
             />
@@ -619,12 +621,14 @@ function NewTabSheet({
     open,
     agents,
     runningAgentTabs,
+    allowHostShell,
     onClose,
     onPick,
 }: {
     open: boolean;
     agents: AgentInfo[];
     runningAgentTabs: TabInfo[];
+    allowHostShell: boolean;
     onClose: () => void;
     onPick: (spec: TabCreateSpec) => void;
 }) {
@@ -645,13 +649,15 @@ function NewTabSheet({
                         />
                     </li>
                 ))}
-                <li>
-                    <MenuRow
-                        icon={<ShellIcon />}
-                        label="Host Shell"
-                        onClick={() => onPick({ kind: "host_shell" })}
-                    />
-                </li>
+                {allowHostShell ? (
+                    <li>
+                        <MenuRow
+                            icon={<ShellIcon />}
+                            label="Host Shell"
+                            onClick={() => onPick({ kind: "host_shell" })}
+                        />
+                    </li>
+                ) : null}
                 {agents.map((a) => (
                     <li key={`agent-${a.id}`}>
                         <MenuRow

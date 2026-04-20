@@ -347,7 +347,8 @@ impl Database {
                     terminal_font_size, sidebar_width, review_panel_width,
                     confirm_on_quit, default_agent_id,
                     sandbox_cpus, sandbox_memory_mb, sandbox_disk_mb, allowed_hosts,
-                    auto_launch_agent, remote_control_enabled
+                    auto_launch_agent, remote_control_enabled,
+                    remote_host_shell_enabled
              FROM settings WHERE id = 1",
             [],
             |row| {
@@ -373,10 +374,24 @@ impl Database {
                     // broken settings read into silent remote-control
                     // enablement.
                     remote_control_enabled: row.get::<_, bool>(14).unwrap_or(false),
+                    // Host-shell access over remote control is off by
+                    // default. The unsandboxed local shell is more
+                    // sensitive than agent tabs; the user opts in
+                    // explicitly via the Settings toggle.
+                    remote_host_shell_enabled: row.get::<_, bool>(15).unwrap_or(false),
                 })
             },
         )
         .map_err(Into::into)
+    }
+
+    pub fn update_remote_host_shell_enabled(&self, enabled: bool) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE settings SET remote_host_shell_enabled = ?1 WHERE id = 1",
+            rusqlite::params![enabled],
+        )?;
+        Ok(())
     }
 
     pub fn update_remote_control_enabled(&self, enabled: bool) -> Result<()> {

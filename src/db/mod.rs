@@ -122,6 +122,18 @@ impl Database {
             conn.execute("INSERT OR REPLACE INTO _migrations (version) VALUES (6)", [])?;
         }
 
+        if current < 7 {
+            if let Err(e) = conn.execute_batch(include_str!(
+                "../../migrations/007_remote_host_shell_enabled.sql"
+            )) {
+                let msg = e.to_string();
+                if !msg.contains("duplicate column name") {
+                    return Err(e.into());
+                }
+            }
+            conn.execute("INSERT OR REPLACE INTO _migrations (version) VALUES (7)", [])?;
+        }
+
         // Belt-and-suspenders: ensure the paired_devices table exists
         // even if a prior buggy migration recorded version 4 without
         // actually creating it. Idempotent via IF NOT EXISTS.

@@ -417,9 +417,25 @@ impl AppView {
                 }
 
                 let new_tab_id: Option<u64> = match spec {
-                    TabCreateSpec::HostShell => self
-                        .terminal
-                        .update(cx, |panel, cx| panel.open_host_shell_tab(cx)),
+                    TabCreateSpec::HostShell => {
+                        // Host-shell is off by default — the user must
+                        // flip the toggle in Settings > Remote control.
+                        let allowed = self
+                            .db
+                            .get_settings()
+                            .map(|s| s.remote_host_shell_enabled)
+                            .unwrap_or(false);
+                        if !allowed {
+                            let _ = response.send(Err(RpcError::new(
+                                error_code::PERMISSION_DENIED,
+                                "host-shell access is disabled; enable it in \
+                                 Settings > Remote control on the desktop",
+                            )));
+                            return;
+                        }
+                        self.terminal
+                            .update(cx, |panel, cx| panel.open_host_shell_tab(cx))
+                    }
                     TabCreateSpec::GuestShell { parent_tab_id } => self
                         .terminal
                         .update(cx, |panel, cx| panel.open_shell_tab(parent_tab_id, cx)),

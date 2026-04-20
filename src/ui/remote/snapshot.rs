@@ -23,6 +23,11 @@ use crate::ui::terminal::TerminalPanel;
 pub struct RemoteStateSnapshot {
     pub workspaces: Vec<WorkspaceInfo>,
     pub tabs: Vec<TabInfo>,
+    /// Whether the user has opted in to remote host-shell access.
+    /// When false, remote clients cannot open a new host-shell tab
+    /// nor attach to an existing one; the unsandboxed shell stays
+    /// desktop-only by default.
+    pub allow_host_shell: bool,
 }
 
 /// Snapshot the current workspaces + tabs.
@@ -101,7 +106,16 @@ pub fn build_snapshot(
     workspaces.sort_by_key(|w| w.workspace_id);
     tabs.sort_by_key(|t| (t.workspace_id, t.tab_id));
 
-    RemoteStateSnapshot { workspaces, tabs }
+    let allow_host_shell = db
+        .get_settings()
+        .map(|s| s.remote_host_shell_enabled)
+        .unwrap_or(false);
+
+    RemoteStateSnapshot {
+        workspaces,
+        tabs,
+        allow_host_shell,
+    }
 }
 
 fn map_tab_kind(kind: &LocalTabKind) -> TabKind {

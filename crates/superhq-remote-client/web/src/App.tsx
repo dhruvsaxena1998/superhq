@@ -51,6 +51,7 @@ function PairedSessionGate() {
                 boot.workspaces,
                 boot.tabs,
                 boot.agents,
+                !!boot.hello.allow_host_shell,
             );
             track("session.ready");
         } catch (e) {
